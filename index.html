@@ -1,0 +1,1352 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-fullscreen">
+    <meta name="apple-mobile-web-app-title" content="División Quest">
+    <meta name="theme-color" content="#D4A574">
+    <meta name="description" content="Juego educativo de divisiones para 4º-6º de primaria">
+    <title>División Quest - Aventura Egipcia</title>
+    <link rel="manifest" href="manifest_division.json">
+    <link href="https://fonts.googleapis.com/css2?family=Andika:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: linear-gradient(135deg, #D4A574 0%, #8B6914 100%);
+            font-family: 'Andika', 'Comic Sans MS', cursive;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            touch-action: none;
+        }
+        #gameCanvas {
+            border-radius: 15px;
+            box-shadow: 0 10px 50px rgba(0,0,0,0.5);
+            max-width: 95vw;
+            max-height: 95vh;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="1000" height="700"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Datos del juego
+        const gameData = {
+            coins: 0,
+            lives: 3,
+            currentLevel: 1,
+            unlockedLevels: 1,
+            currentExplorer: 'classic',
+            ownedExplorers: ['classic'],
+            divisionsCorrect: 0,
+            scene: 'menu'
+        };
+
+        // Divisiones por nivel (10 por nivel)
+        const levelDivisions = {
+            1: [[10,2],[12,3],[15,3],[20,4],[16,4],[18,3],[21,7],[24,6],[27,9],[30,5]],
+            2: [[24,4],[32,8],[36,6],[40,5],[45,9],[48,6],[54,9],[56,7],[63,9],[72,8]],
+            3: [[42,6],[49,7],[56,8],[64,8],[81,9],[35,7],[28,4],[48,8],[63,7],[36,4]],
+            4: [[84,7],[96,8],[72,6],[60,5],[88,8],[77,7],[90,9],[66,6],[55,5],[99,9]],
+            5: [[144,12],[156,13],[132,11],[168,14],[180,15],[120,10],[165,15],[143,11],[169,13],[192,16]],
+            6: [[225,15],[240,16],[210,14],[270,18],[300,20],[195,13],[264,12],[288,16],[336,21],[252,14]],
+            7: [[25,4],[30,7],[45,8],[50,6],[37,5],[41,6],[53,7],[62,8],[71,9],[83,10]], // Con resto
+            8: [[95,12],[110,13],[125,14],[140,15],[156,17],[173,18],[189,19],[205,20],[221,21],[237,22]], // Con resto
+            9: [[300,23],[350,24],[400,27],[450,31],[500,33],[550,37],[600,41],[650,43],[700,47],[750,49]] // Con resto grandes
+        };
+
+        // Exploradores disponibles
+        const explorers = [
+            { name: 'Clásico', id: 'classic', price: 0 },
+            { name: 'Indiana', id: 'indiana', price: 8 },
+            { name: 'Arqueóloga', id: 'archaeologist', price: 8 },
+            { name: 'Aventurero', id: 'adventurer', price: 8 },
+            { name: 'Faraón', id: 'pharaoh', price: 10 },
+            { name: 'Cleopatra', id: 'cleopatra', price: 10 },
+            { name: 'Anubis', id: 'anubis', price: 12 }
+        ];
+
+        // Player
+        const player = {
+            x: 100,
+            y: 500,
+            width: 40,
+            height: 50,
+            velocityX: 0,
+            velocityY: 0,
+            speed: 6,
+            jumpPower: 16,
+            gravity: 0.6,
+            onGround: false,
+            invincible: false,
+            invincibleTimer: 0
+        };
+
+        // Game state
+        let currentDivisions = [];
+        let temples = [];
+        let scorpions = [];
+        let traps = [];
+        let mummy = null;
+        let treasureChest = null;
+        let cameraX = 0;
+        let showingKeypad = false;
+        let currentTemple = null;
+        let playerAnswer = '';
+        let gameTime = 0;
+
+        // Input
+        const keys = {};
+        let touchLeft = false;
+        let touchRight = false;
+        let touchJump = false;
+        let mouseX = 0;
+        let mouseY = 0;
+
+        // ============ EVENTOS DE INPUT ============
+        document.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+            // Teclado numérico físico
+            if (showingKeypad && /^[0-9]$/.test(e.key)) {
+                if (playerAnswer.length < 5) playerAnswer += e.key;
+            }
+            if (showingKeypad && e.key === 'Backspace') {
+                playerAnswer = playerAnswer.slice(0, -1);
+            }
+            if (showingKeypad && e.key === 'Enter') {
+                checkAnswer();
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+            handleClick(mouseX, mouseY);
+        });
+
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            mouseX = (touch.clientX - rect.left) * (canvas.width / rect.width);
+            mouseY = (touch.clientY - rect.top) * (canvas.height / rect.height);
+            handleClick(mouseX, mouseY);
+        });
+
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            touchLeft = false;
+            touchRight = false;
+        });
+
+        // ============ FUNCIONES DE DIBUJO ============
+        function drawRect(x, y, w, h, color, stroke = null) {
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, w, h);
+            if (stroke) {
+                ctx.strokeStyle = stroke;
+                ctx.lineWidth = 3;
+                ctx.strokeRect(x, y, w, h);
+            }
+        }
+
+        function drawCircle(x, y, radius, color) {
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(x, y, radius, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function drawText(text, x, y, size, color, align = 'left', stroke = false) {
+            ctx.font = `bold ${size}px Andika, Arial, sans-serif`;
+            ctx.fillStyle = color;
+            ctx.textAlign = align;
+            ctx.textBaseline = 'middle';
+            
+            if (stroke) {
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 6;
+                ctx.strokeText(text, x, y);
+            }
+            
+            ctx.fillText(text, x, y);
+        }
+
+        function drawButton(x, y, w, h, text, color) {
+            drawRect(x + 3, y + 3, w, h, 'rgba(0,0,0,0.3)');
+            drawRect(x, y, w, h, color, '#fff');
+            drawText(text, x + w/2, y + h/2, 20, '#fff', 'center');
+            return { x, y, w, h };
+        }
+
+        // ============ DIBUJAR TEMPLO EGIPCIO ============
+        function drawTemple(x, y, division, solved) {
+            const w = 100;
+            const h = 120;
+            
+            // Base del templo (piedra)
+            ctx.fillStyle = solved ? '#90EE90' : '#C9A876';
+            ctx.fillRect(x - w/2, y - h, w, h);
+            
+            // Columnas laterales
+            ctx.fillStyle = solved ? '#7CCD7C' : '#A0826D';
+            ctx.fillRect(x - w/2, y - h, 15, h);
+            ctx.fillRect(x + w/2 - 15, y - h, 15, h);
+            
+            // Techo triangular
+            ctx.fillStyle = solved ? '#6B8E6B' : '#8B7355';
+            ctx.beginPath();
+            ctx.moveTo(x - w/2 - 5, y - h);
+            ctx.lineTo(x, y - h - 25);
+            ctx.lineTo(x + w/2 + 5, y - h);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Puerta (entrada)
+            ctx.fillStyle = solved ? '#4CAF50' : '#654321';
+            ctx.fillRect(x - 25, y - 70, 50, 70);
+            
+            // Jeroglífico de división
+            if (!solved) {
+                ctx.fillStyle = '#000';
+                ctx.font = 'bold 32px Andika';
+                ctx.textAlign = 'center';
+                ctx.fillText(`${division[0]}÷${division[1]}`, x, y - h/2);
+            } else {
+                ctx.fillStyle = '#2E7D32';
+                ctx.font = 'bold 48px Arial';
+                ctx.fillText('✓', x, y - h/2);
+            }
+            
+            // Sombra del templo
+            ctx.fillStyle = 'rgba(0,0,0,0.2)';
+            ctx.fillRect(x - w/2 + 3, y, w, 5);
+        }
+
+        // ============ DIBUJAR ESCORPIÓN ============
+        function drawScorpion(x, y) {
+            // Cuerpo (marrón oscuro)
+            ctx.fillStyle = '#4A2511';
+            
+            // Cuerpo principal
+            ctx.beginPath();
+            ctx.ellipse(x, y, 15, 10, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Cabeza
+            ctx.beginPath();
+            ctx.ellipse(x + 12, y, 8, 7, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Pinzas
+            ctx.strokeStyle = '#4A2511';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(x + 15, y - 3);
+            ctx.lineTo(x + 22, y - 8);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(x + 15, y + 3);
+            ctx.lineTo(x + 22, y + 8);
+            ctx.stroke();
+            
+            // Patas (6 patas)
+            ctx.lineWidth = 2;
+            for (let i = 0; i < 3; i++) {
+                ctx.beginPath();
+                ctx.moveTo(x - 5 + i * 7, y - 8);
+                ctx.lineTo(x - 5 + i * 7, y - 15);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(x - 5 + i * 7, y + 8);
+                ctx.lineTo(x - 5 + i * 7, y + 15);
+                ctx.stroke();
+            }
+            
+            // Cola (aguijón)
+            ctx.strokeStyle = '#8B4513';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(x - 15, y);
+            ctx.quadraticCurveTo(x - 25, y - 5, x - 30, y - 15);
+            ctx.stroke();
+            
+            // Aguijón punta
+            ctx.fillStyle = '#FF0000';
+            ctx.beginPath();
+            ctx.arc(x - 30, y - 15, 3, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // ============ DIBUJAR TRAMPA (PINCHOS) ============
+        function drawTrap(x, y, extended) {
+            const height = extended ? 40 : 10;
+            
+            // Base
+            ctx.fillStyle = '#654321';
+            ctx.fillRect(x - 30, y, 60, 10);
+            
+            // Pinchos
+            ctx.fillStyle = '#B87333';
+            for (let i = 0; i < 5; i++) {
+                ctx.beginPath();
+                ctx.moveTo(x - 25 + i * 12, y);
+                ctx.lineTo(x - 20 + i * 12, y - height);
+                ctx.lineTo(x - 15 + i * 12, y);
+                ctx.closePath();
+                ctx.fill();
+            }
+            
+            // Contorno negro
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 2;
+            for (let i = 0; i < 5; i++) {
+                ctx.beginPath();
+                ctx.moveTo(x - 25 + i * 12, y);
+                ctx.lineTo(x - 20 + i * 12, y - height);
+                ctx.lineTo(x - 15 + i * 12, y);
+                ctx.closePath();
+                ctx.stroke();
+            }
+        }
+
+        // ============ DIBUJAR MOMIA ============
+        function drawMummy(x, y) {
+            // Cuerpo (vendas blancas)
+            ctx.fillStyle = '#F5F5DC';
+            
+            // Cuerpo principal
+            ctx.fillRect(x - 15, y - 40, 30, 50);
+            
+            // Cabeza
+            ctx.fillRect(x - 12, y - 55, 24, 25);
+            
+            // Brazos extendidos (amenazante)
+            ctx.fillRect(x - 30, y - 30, 15, 10);
+            ctx.fillRect(x + 15, y - 30, 15, 10);
+            
+            // Piernas
+            ctx.fillRect(x - 12, y + 10, 10, 20);
+            ctx.fillRect(x + 2, y + 10, 10, 20);
+            
+            // Vendas (líneas)
+            ctx.strokeStyle = '#D3D3D3';
+            ctx.lineWidth = 2;
+            for (let i = 0; i < 8; i++) {
+                ctx.beginPath();
+                ctx.moveTo(x - 15, y - 35 + i * 10);
+                ctx.lineTo(x + 15, y - 35 + i * 10);
+                ctx.stroke();
+            }
+            
+            // Ojos rojos brillantes
+            ctx.fillStyle = '#FF0000';
+            ctx.beginPath();
+            ctx.arc(x - 5, y - 45, 3, 0, Math.PI * 2);
+            ctx.arc(x + 5, y - 45, 3, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Brillo en los ojos
+            ctx.fillStyle = '#FFF';
+            ctx.beginPath();
+            ctx.arc(x - 4, y - 46, 1, 0, Math.PI * 2);
+            ctx.arc(x + 6, y - 46, 1, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // ============ DIBUJAR COFRE DEL TESORO ============
+        function drawTreasureChest(x, y, locked) {
+            const w = 60;
+            const h = 40;
+            
+            // Base del cofre (marrón)
+            ctx.fillStyle = locked ? '#8B4513' : '#FFD700';
+            ctx.fillRect(x - w/2, y - h/2, w, h);
+            
+            // Tapa (arqueada)
+            ctx.beginPath();
+            ctx.arc(x, y - h/2, w/2, Math.PI, 0, false);
+            ctx.fill();
+            
+            // Detalles metálicos
+            ctx.strokeStyle = locked ? '#DAA520' : '#FFA500';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(x - w/2, y - h/2, w, h);
+            ctx.beginPath();
+            ctx.arc(x, y - h/2, w/2, Math.PI, 0, false);
+            ctx.stroke();
+            
+            // Candado
+            if (locked) {
+                ctx.fillStyle = '#FFD700';
+                ctx.fillRect(x - 8, y - 5, 16, 12);
+                ctx.beginPath();
+                ctx.arc(x, y - 5, 8, Math.PI, 0, true);
+                ctx.fill();
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            } else {
+                // Cofre abierto - monedas saltando
+                ctx.fillStyle = '#FFD700';
+                for (let i = 0; i < 5; i++) {
+                    ctx.beginPath();
+                    ctx.arc(x - 20 + i * 10, y - h/2 - 10 - Math.sin(gameTime/10 + i) * 5, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+        }
+
+        // ============ DIBUJAR EXPLORADORES ============
+        function drawExplorer(x, y, type) {
+            switch(type) {
+                case 'classic':
+                    drawClassicExplorer(x, y);
+                    break;
+                case 'indiana':
+                    drawIndianaExplorer(x, y);
+                    break;
+                case 'archaeologist':
+                    drawArchaeologistExplorer(x, y);
+                    break;
+                case 'adventurer':
+                    drawAdventurerExplorer(x, y);
+                    break;
+                case 'pharaoh':
+                    drawPharaohExplorer(x, y);
+                    break;
+                case 'cleopatra':
+                    drawCleopatraExplorer(x, y);
+                    break;
+                case 'anubis':
+                    drawAnubisExplorer(x, y);
+                    break;
+            }
+        }
+
+        function drawClassicExplorer(x, y) {
+            // Cabeza
+            drawCircle(x, y - 20, 12, '#FFDBAC');
+            // Ojos
+            ctx.fillStyle = '#000';
+            ctx.fillRect(x - 4, y - 23, 2, 2);
+            ctx.fillRect(x + 2, y - 23, 2, 2);
+            // Sombrero explorador (beige)
+            ctx.fillStyle = '#D2B48C';
+            ctx.fillRect(x - 15, y - 30, 30, 5);
+            ctx.fillRect(x - 10, y - 35, 20, 8);
+            // Camisa caqui
+            drawRect(x - 7, y - 8, 14, 18, '#9B8B54');
+            // Brazos
+            drawRect(x - 13, y - 5, 6, 12, '#9B8B54');
+            drawRect(x + 7, y - 5, 6, 12, '#9B8B54');
+            // Pantalones
+            drawRect(x - 7, y + 10, 6, 15, '#654321');
+            drawRect(x + 1, y + 10, 6, 15, '#654321');
+        }
+
+        function drawIndianaExplorer(x, y) {
+            drawCircle(x, y - 20, 12, '#FFDBAC');
+            ctx.fillStyle = '#000';
+            ctx.fillRect(x - 4, y - 23, 2, 2);
+            ctx.fillRect(x + 2, y - 23, 2, 2);
+            // Sombrero marrón característico
+            ctx.fillStyle = '#654321';
+            ctx.fillRect(x - 18, y - 30, 36, 4);
+            ctx.fillRect(x - 12, y - 38, 24, 10);
+            // Chaqueta marrón
+            drawRect(x - 7, y - 8, 14, 18, '#8B4513');
+            drawRect(x - 13, y - 5, 6, 12, '#8B4513');
+            drawRect(x + 7, y - 5, 6, 12, '#8B4513');
+            // Látigo en el cinturón
+            ctx.strokeStyle = '#D2691E';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(x + 7, y + 5);
+            ctx.lineTo(x + 15, y + 15);
+            ctx.stroke();
+            drawRect(x - 7, y + 10, 6, 15, '#654321');
+            drawRect(x + 1, y + 10, 6, 15, '#654321');
+        }
+
+        function drawArchaeologistExplorer(x, y) {
+            drawCircle(x, y - 20, 12, '#FFDBAC');
+            ctx.fillStyle = '#000';
+            ctx.fillRect(x - 4, y - 23, 2, 2);
+            ctx.fillRect(x + 2, y - 23, 2, 2);
+            // Cabello largo (arqueóloga)
+            ctx.fillStyle = '#8B4513';
+            ctx.fillRect(x - 12, y - 28, 24, 15);
+            // Chaleco beige con bolsillos
+            drawRect(x - 7, y - 8, 14, 18, '#D2B48C');
+            // Bolsillos
+            ctx.strokeStyle = '#8B7355';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x - 5, y - 2, 4, 5);
+            ctx.strokeRect(x + 1, y - 2, 4, 5);
+            drawRect(x - 13, y - 5, 6, 12, '#FFF');
+            drawRect(x + 7, y - 5, 6, 12, '#FFF');
+            drawRect(x - 7, y + 10, 6, 15, '#4682B4');
+            drawRect(x + 1, y + 10, 6, 15, '#4682B4');
+        }
+
+        function drawAdventurerExplorer(x, y) {
+            drawCircle(x, y - 20, 12, '#FFDBAC');
+            ctx.fillStyle = '#000';
+            ctx.fillRect(x - 4, y - 23, 2, 2);
+            ctx.fillRect(x + 2, y - 23, 2, 2);
+            // Bandana roja
+            ctx.fillStyle = '#DC143C';
+            ctx.fillRect(x - 12, y - 30, 24, 5);
+            // Camiseta verde militar
+            drawRect(x - 7, y - 8, 14, 18, '#556B2F');
+            drawRect(x - 13, y - 5, 6, 12, '#556B2F');
+            drawRect(x + 7, y - 5, 6, 12, '#556B2F');
+            // Pantalones cargo
+            drawRect(x - 7, y + 10, 6, 15, '#8B7355');
+            drawRect(x + 1, y + 10, 6, 15, '#8B7355');
+            // Mochila pequeña
+            ctx.fillStyle = '#654321';
+            ctx.fillRect(x - 12, y - 5, 8, 10);
+        }
+
+        function drawPharaohExplorer(x, y) {
+            drawCircle(x, y - 20, 12, '#D2691E');
+            ctx.fillStyle = '#000';
+            ctx.fillRect(x - 4, y - 23, 2, 2);
+            ctx.fillRect(x + 2, y - 23, 2, 2);
+            // Nemes (tocado faraónico) azul y dorado
+            ctx.fillStyle = '#4169E1';
+            ctx.fillRect(x - 15, y - 32, 30, 15);
+            ctx.fillStyle = '#FFD700';
+            ctx.fillRect(x - 15, y - 32, 30, 3);
+            ctx.fillRect(x - 15, y - 25, 30, 2);
+            // Barba postiza
+            ctx.fillStyle = '#000';
+            ctx.fillRect(x - 2, y - 12, 4, 8);
+            // Túnica blanca con collar dorado
+            drawRect(x - 7, y - 8, 14, 18, '#FFF');
+            // Collar
+            ctx.fillStyle = '#FFD700';
+            ctx.fillRect(x - 10, y - 8, 20, 3);
+            drawRect(x - 13, y - 5, 6, 12, '#FFF');
+            drawRect(x + 7, y - 5, 6, 12, '#FFF');
+            drawRect(x - 7, y + 10, 6, 15, '#4169E1');
+            drawRect(x + 1, y + 10, 6, 15, '#4169E1');
+        }
+
+        function drawCleopatraExplorer(x, y) {
+            drawCircle(x, y - 20, 12, '#D2691E');
+            ctx.fillStyle = '#000';
+            ctx.fillRect(x - 4, y - 23, 2, 2);
+            ctx.fillRect(x + 2, y - 23, 2, 2);
+            // Cabello negro con diadema dorada
+            ctx.fillStyle = '#000';
+            ctx.fillRect(x - 12, y - 30, 24, 15);
+            ctx.fillStyle = '#FFD700';
+            ctx.fillRect(x - 12, y - 30, 24, 3);
+            // Collar dorado elaborado
+            ctx.fillStyle = '#FFD700';
+            for (let i = 0; i < 3; i++) {
+                ctx.fillRect(x - 10, y - 8 + i * 2, 20, 1);
+            }
+            // Vestido blanco
+            drawRect(x - 7, y - 8, 14, 18, '#FFF');
+            drawRect(x - 13, y - 5, 6, 12, '#FFF');
+            drawRect(x + 7, y - 5, 6, 12, '#FFF');
+            drawRect(x - 7, y + 10, 6, 15, '#9370DB');
+            drawRect(x + 1, y + 10, 6, 15, '#9370DB');
+            // Brazaletes dorados
+            ctx.fillStyle = '#FFD700';
+            ctx.fillRect(x - 13, y, 6, 3);
+            ctx.fillRect(x + 7, y, 6, 3);
+        }
+
+        function drawAnubisExplorer(x, y) {
+            // Cabeza de chacal negro
+            ctx.fillStyle = '#000';
+            ctx.fillRect(x - 10, y - 30, 20, 20);
+            // Orejas puntiagudas
+            ctx.beginPath();
+            ctx.moveTo(x - 10, y - 30);
+            ctx.lineTo(x - 15, y - 40);
+            ctx.lineTo(x - 5, y - 30);
+            ctx.closePath();
+            ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(x + 10, y - 30);
+            ctx.lineTo(x + 15, y - 40);
+            ctx.lineTo(x + 5, y - 30);
+            ctx.closePath();
+            ctx.fill();
+            // Hocico
+            ctx.fillStyle = '#8B4513';
+            ctx.fillRect(x - 5, y - 18, 10, 8);
+            // Ojos dorados brillantes
+            ctx.fillStyle = '#FFD700';
+            ctx.beginPath();
+            ctx.arc(x - 4, y - 24, 3, 0, Math.PI * 2);
+            ctx.arc(x + 4, y - 24, 3, 0, Math.PI * 2);
+            ctx.fill();
+            // Cuerpo negro con detalles dorados
+            drawRect(x - 7, y - 8, 14, 18, '#000');
+            ctx.fillStyle = '#FFD700';
+            ctx.fillRect(x - 2, y - 5, 4, 15);
+            drawRect(x - 13, y - 5, 6, 12, '#000');
+            drawRect(x + 7, y - 5, 6, 12, '#000');
+            drawRect(x - 7, y + 10, 6, 15, '#2F4F4F');
+            drawRect(x + 1, y + 10, 6, 15, '#2F4F4F');
+        }
+
+        function drawPlayer(offsetX = 0, offsetY = 0) {
+            const x = player.x - cameraX + offsetX;
+            const y = player.y + offsetY;
+            
+            if (player.invincible && Math.floor(Date.now() / 100) % 2 === 0) {
+                return;
+            }
+            
+            drawExplorer(x, y, gameData.currentExplorer);
+        }
+
+        // ============ TECLADO NUMÉRICO ============
+        function drawKeypad() {
+            // Overlay oscuro
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, 1000, 700);
+            
+            // Panel del teclado
+            drawRect(250, 150, 500, 450, '#2C3E50', '#fff');
+            
+            // Mostrar división
+            const div = currentTemple.division;
+            const needsRemainder = gameData.currentLevel >= 7;
+            
+            drawText(`${div[0]} ÷ ${div[1]} =`, 500, 220, 56, '#FFF', 'center');
+            
+            // Mostrar respuesta del jugador
+            drawRect(350, 270, 300, 60, '#FFF', '#34495e');
+            drawText(playerAnswer || '_', 500, 300, 48, '#000', 'center');
+            
+            if (needsRemainder) {
+                drawText('(cociente + resto)', 500, 345, 18, '#95A5A6', 'center');
+                drawText('Ejemplo: 25÷4 = 6 r1 → escribe: 61', 500, 370, 16, '#95A5A6', 'center');
+            }
+            
+            // Botones numéricos
+            const buttons = [];
+            const btnSize = 70;
+            const startX = 320;
+            const startY = 400;
+            
+            for (let i = 1; i <= 9; i++) {
+                const row = Math.floor((i - 1) / 3);
+                const col = (i - 1) % 3;
+                const x = startX + col * 80;
+                const y = startY + row * 80;
+                
+                const btn = drawButton(x, y, btnSize, btnSize, i.toString(), '#3498db');
+                buttons.push({ ...btn, action: 'number', value: i.toString() });
+            }
+            
+            // Botón 0
+            const btn0 = drawButton(startX + 80, startY + 240, btnSize, btnSize, '0', '#3498db');
+            buttons.push({ ...btn0, action: 'number', value: '0' });
+            
+            // Botón borrar
+            const btnDel = drawButton(startX, startY + 240, btnSize, btnSize, '←', '#e74c3c');
+            buttons.push({ ...btnDel, action: 'delete' });
+            
+            // Botón OK
+            const btnOk = drawButton(startX + 160, startY + 240, btnSize, btnSize, '✓', '#27ae60');
+            buttons.push({ ...btnOk, action: 'check' });
+            
+            return buttons;
+        }
+
+        // ============ ESCENAS ============
+        function drawMenu() {
+            // Fondo desértico
+            const gradient = ctx.createLinearGradient(0, 0, 0, 700);
+            gradient.addColorStop(0, '#87CEEB');
+            gradient.addColorStop(0.6, '#F4A460');
+            gradient.addColorStop(1, '#DEB887');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, 1000, 700);
+            
+            // Sol egipcio
+            drawCircle(850, 100, 60, '#FFD700');
+            ctx.fillStyle = '#FFA500';
+            for (let i = 0; i < 12; i++) {
+                const angle = (i * 30) * Math.PI / 180;
+                ctx.beginPath();
+                ctx.moveTo(850 + Math.cos(angle) * 65, 100 + Math.sin(angle) * 65);
+                ctx.lineTo(850 + Math.cos(angle) * 85, 100 + Math.sin(angle) * 85);
+                ctx.stroke();
+            }
+            
+            // Pirámides de fondo
+            ctx.fillStyle = '#C9A876';
+            ctx.beginPath();
+            ctx.moveTo(150, 350);
+            ctx.lineTo(250, 150);
+            ctx.lineTo(350, 350);
+            ctx.closePath();
+            ctx.fill();
+            
+            ctx.beginPath();
+            ctx.moveTo(600, 350);
+            ctx.lineTo(720, 120);
+            ctx.lineTo(840, 350);
+            ctx.closePath();
+            ctx.fill();
+            
+            drawText('🏺 DIVISIÓN QUEST', 500, 80, 52, '#8B4513', 'center', true);
+            drawText('Aventura Egipcia', 500, 140, 38, '#D2691E', 'center', true);
+            
+            drawText(`💰 ${gameData.coins}  ❤️ ${gameData.lives}`, 500, 210, 32, '#FFD700', 'center');
+            
+            const buttons = [];
+            for (let i = 1; i <= 9; i++) {
+                const row = Math.floor((i - 1) / 3);
+                const col = (i - 1) % 3;
+                const x = 300 + col * 150;
+                const y = 290 + row * 90;
+                const isUnlocked = i <= gameData.unlockedLevels;
+                
+                const btn = drawButton(x, y, 110, 65, `Nivel ${i}`, isUnlocked ? '#E67E22' : '#7F8C8D');
+                if (isUnlocked) {
+                    buttons.push({ ...btn, action: 'level', level: i });
+                }
+            }
+            
+            const shopBtn = drawButton(350, 620, 300, 55, '🏺 TIENDA', '#D35400');
+            buttons.push({ ...shopBtn, action: 'shop' });
+            
+            return buttons;
+        }
+
+        function initGame() {
+            gameData.divisionsCorrect = 0;
+            player.x = 100;
+            player.y = 500;
+            player.velocityX = 0;
+            player.velocityY = 0;
+            player.invincible = false;
+            player.invincibleTimer = 0;
+            cameraX = 0;
+            showingKeypad = false;
+            playerAnswer = '';
+            gameTime = 0;
+            
+            currentDivisions = levelDivisions[gameData.currentLevel];
+            temples = [];
+            scorpions = [];
+            traps = [];
+            
+            // Crear templos en posiciones variadas
+            const positions = [
+                [400, 580], [700, 450], [1000, 580], [1300, 400],
+                [1600, 580], [1900, 480], [2200, 580], [2500, 420],
+                [2800, 580], [3100, 460]
+            ];
+            
+            for (let i = 0; i < 10; i++) {
+                temples.push({
+                    x: positions[i][0],
+                    y: positions[i][1],
+                    division: currentDivisions[i],
+                    solved: false
+                });
+            }
+            
+            // Crear 2 escorpiones
+            scorpions.push({
+                x: 800,
+                y: 625,
+                velocityX: 2,
+                direction: 1,
+                active: true
+            });
+            scorpions.push({
+                x: 2000,
+                y: 625,
+                velocityX: 1.5,
+                direction: -1,
+                active: true
+            });
+            
+            // Crear 3 trampas fijas
+            traps.push({ x: 1100, y: 650, timer: 0, extended: false });
+            traps.push({ x: 1700, y: 650, timer: 60, extended: false });
+            traps.push({ x: 2400, y: 650, timer: 120, extended: false });
+            
+            // Momia guardiana y cofre al final
+            mummy = {
+                x: 3500,
+                y: 580,
+                velocityX: 3,
+                direction: -1,
+                active: true
+            };
+            
+            treasureChest = {
+                x: 3700,
+                y: 470,
+                locked: true,
+                division: [gameData.currentLevel * 50, gameData.currentLevel + 3]
+            };
+        }
+
+        function drawGame() {
+            // Fondo desértico
+            const gradient = ctx.createLinearGradient(0, 0, 0, 700);
+            gradient.addColorStop(0, '#87CEEB');
+            gradient.addColorStop(0.6, '#F4A460');
+            gradient.addColorStop(1, '#DEB887');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, 1000, 700);
+            
+            // Arena (suelo)
+            ctx.fillStyle = '#EDC9AF';
+            ctx.fillRect(0 - cameraX, 650, 4000, 50);
+            
+            // Plataformas (piedra egipcia)
+            ctx.fillStyle = '#C9A876';
+            const platforms = [
+                [300, 520], [600, 470], [900, 520], [1200, 440],
+                [1500, 520], [1800, 500], [2100, 520], [2400, 460],
+                [2700, 520], [3000, 480], [3300, 450]
+            ];
+            platforms.forEach(([x, y]) => {
+                ctx.fillRect(x - cameraX, y, 150, 20);
+                // Detalles de jeroglíficos
+                ctx.strokeStyle = '#8B7355';
+                ctx.lineWidth = 2;
+                for (let i = 0; i < 3; i++) {
+                    ctx.strokeRect(x - cameraX + 10 + i * 40, y + 5, 20, 10);
+                }
+            });
+            
+            // Templos
+            temples.forEach(temple => {
+                const templeX = temple.x - cameraX;
+                if (templeX > -200 && templeX < 1200) {
+                    drawTemple(templeX, temple.y, temple.division, temple.solved);
+                }
+            });
+            
+            // Trampas
+            traps.forEach(trap => {
+                const trapX = trap.x - cameraX;
+                if (trapX > -100 && trapX < 1100) {
+                    drawTrap(trapX, trap.y, trap.extended);
+                }
+            });
+            
+            // Escorpiones
+            scorpions.forEach(scorpion => {
+                if (scorpion.active) {
+                    const scorpionX = scorpion.x - cameraX;
+                    if (scorpionX > -100 && scorpionX < 1100) {
+                        drawScorpion(scorpionX, scorpion.y);
+                    }
+                }
+            });
+            
+            // Momia y cofre
+            if (gameData.divisionsCorrect >= 10) {
+                const mummyX = mummy.x - cameraX;
+                const chestX = treasureChest.x - cameraX;
+                if (mummyX > -200 && mummyX < 1200) {
+                    drawMummy(mummyX, mummy.y);
+                }
+                if (chestX > -100 && chestX < 1100) {
+                    drawTreasureChest(chestX, treasureChest.y, treasureChest.locked);
+                }
+            }
+            
+            // Jugador
+            drawPlayer();
+            
+            // UI superior
+            drawRect(0, 0, 1000, 70, 'rgba(139, 69, 19, 0.9)');
+            drawText(`💰 ${gameData.coins}`, 25, 35, 26, '#FFD700');
+            
+            let heartsText = '';
+            for (let i = 0; i < gameData.lives; i++) {
+                heartsText += '❤️';
+            }
+            drawText(heartsText, 250, 35, 26, '#FF0000');
+            
+            drawText(`🏺 ${gameData.divisionsCorrect}/10`, 500, 35, 26, '#FFF', 'center');
+            drawText(`Nivel ${gameData.currentLevel}`, 950, 35, 26, '#FFF', 'right');
+            
+            // Controles táctiles
+            const buttons = [];
+            
+            ctx.fillStyle = 'rgba(139, 69, 19, 0.75)';
+            ctx.beginPath();
+            ctx.arc(150, 610, 45, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+            drawText('←', 150, 610, 44, '#FFF', 'center');
+            buttons.push({ x: 105, y: 565, w: 90, h: 90, action: 'left' });
+            
+            ctx.fillStyle = 'rgba(212, 175, 55, 0.75)';
+            ctx.beginPath();
+            ctx.arc(280, 610, 45, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+            drawText('↑', 280, 610, 44, '#FFF', 'center');
+            buttons.push({ x: 235, y: 565, w: 90, h: 90, action: 'jump' });
+            
+            ctx.fillStyle = 'rgba(139, 69, 19, 0.75)';
+            ctx.beginPath();
+            ctx.arc(410, 610, 45, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+            drawText('→', 410, 610, 44, '#FFF', 'center');
+            buttons.push({ x: 365, y: 565, w: 90, h: 90, action: 'right' });
+            
+            return buttons;
+        }
+
+        function checkAnswer() {
+            const div = currentTemple.division;
+            const correctAnswer = Math.floor(div[0] / div[1]);
+            const remainder = div[0] % div[1];
+            const needsRemainder = gameData.currentLevel >= 7;
+            
+            let isCorrect = false;
+            
+            if (needsRemainder && remainder > 0) {
+                // Formato: "cociente" + "resto" (ejemplo: 61 para 6 resto 1)
+                const expectedAnswer = correctAnswer.toString() + remainder.toString();
+                isCorrect = playerAnswer === expectedAnswer;
+            } else {
+                isCorrect = parseInt(playerAnswer) === correctAnswer;
+            }
+            
+            if (isCorrect) {
+                gameData.coins += 2;
+                gameData.divisionsCorrect++;
+                currentTemple.solved = true;
+            } else {
+                gameData.coins -= 1;
+                if (gameData.coins < 0) gameData.coins = 0;
+            }
+            
+            playerAnswer = '';
+            showingKeypad = false;
+        }
+
+        function drawVictory() {
+            const gradient = ctx.createLinearGradient(0, 0, 0, 700);
+            gradient.addColorStop(0, '#FFD700');
+            gradient.addColorStop(1, '#FFA500');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, 1000, 700);
+            
+            drawText('🏆 ¡NIVEL', 500, 120, 54, '#8B4513', 'center', true);
+            drawText('COMPLETADO! 🏆', 500, 180, 54, '#8B4513', 'center', true);
+            
+            drawText(`💰 Monedas: ${gameData.coins}`, 500, 270, 32, '#654321', 'center');
+            drawText(`❤️ Vidas: ${gameData.lives}`, 500, 320, 32, '#DC143C', 'center');
+            
+            if (gameData.currentLevel === gameData.unlockedLevels && gameData.currentLevel < 9) {
+                gameData.unlockedLevels++;
+                drawText(`🔓 Nivel ${gameData.unlockedLevels} desbloqueado`, 500, 370, 24, '#27ae60', 'center');
+            }
+            
+            const buttons = [];
+            const shopBtn = drawButton(325, 430, 350, 65, '🏺 IR A LA TIENDA', '#D35400');
+            buttons.push({ ...shopBtn, action: 'shop' });
+            
+            const menuBtn = drawButton(325, 520, 350, 65, '🏠 MENÚ PRINCIPAL', '#E67E22');
+            buttons.push({ ...menuBtn, action: 'menu' });
+            
+            return buttons;
+        }
+
+        function drawGameOver() {
+            drawRect(0, 0, 1000, 700, '#2C3E50');
+            
+            drawText('💀 GAME OVER 💀', 500, 200, 54, '#e74c3c', 'center', true);
+            drawText('¡Te quedaste sin vidas!', 500, 280, 28, '#ECF0F1', 'center');
+            drawText(`Nivel: ${gameData.currentLevel}`, 500, 330, 24, '#ECF0F1', 'center');
+            drawText(`💰 ${gameData.coins}`, 500, 370, 24, '#FFD700', 'center');
+            
+            const buttons = [];
+            const retryBtn = drawButton(325, 440, 350, 65, '🔄 REINTENTAR', '#E67E22');
+            buttons.push({ ...retryBtn, action: 'retry' });
+            
+            const menuBtn = drawButton(325, 530, 350, 65, '🏠 MENÚ', '#95A5A6');
+            buttons.push({ ...menuBtn, action: 'menu' });
+            
+            return buttons;
+        }
+
+        function drawShop() {
+            const gradient = ctx.createLinearGradient(0, 0, 0, 700);
+            gradient.addColorStop(0, '#8B4513');
+            gradient.addColorStop(1, '#D2691E');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, 1000, 700);
+            
+            drawText('🏺 TIENDA DE EXPLORADORES', 500, 60, 40, '#FFD700', 'center', true);
+            drawText(`💰 ${gameData.coins}`, 500, 120, 28, '#FFD700', 'center');
+            
+            const buttons = [];
+            
+            explorers.forEach((explorer, i) => {
+                const row = Math.floor(i / 4);
+                const col = i % 4;
+                const x = 80 + col * 230;
+                const y = 200 + row * 160;
+                
+                const isOwned = gameData.ownedExplorers.includes(explorer.id);
+                const isCurrent = gameData.currentExplorer === explorer.id;
+                
+                const bgColor = isCurrent ? '#27AE60' : (isOwned ? '#3498DB' : '#7F8C8D');
+                drawRect(x, y, 200, 130, bgColor, '#ECF0F1');
+                
+                drawText(explorer.name, x + 100, y + 30, 18, '#FFF', 'center');
+                
+                if (isOwned) {
+                    if (isCurrent) {
+                        drawText('✅ EQUIPADO', x + 100, y + 80, 16, '#FFF', 'center');
+                    } else {
+                        const btn = drawButton(x + 30, y + 65, 140, 40, 'EQUIPAR', '#2ECC71');
+                        buttons.push({ ...btn, action: 'equip', explorer: explorer.id });
+                    }
+                } else {
+                    drawText(`💰 ${explorer.price}`, x + 100, y + 65, 18, '#FFD700', 'center');
+                    const canBuy = gameData.coins >= explorer.price;
+                    const btn = drawButton(x + 30, y + 85, 140, 35, canBuy ? 'COMPRAR' : 'SIN $', canBuy ? '#F39C12' : '#95A5A6');
+                    if (canBuy) {
+                        buttons.push({ ...btn, action: 'buy', explorer: explorer.id, price: explorer.price });
+                    }
+                }
+            });
+            
+            const backBtn = drawButton(400, 620, 200, 50, '⬅ VOLVER', '#8B4513');
+            buttons.push({ ...backBtn, action: 'menu' });
+            
+            return buttons;
+        }
+
+        // ============ UPDATE Y FÍSICA ============
+        function updateGame() {
+            gameTime++;
+            
+            if (keys['ArrowLeft'] || keys['a'] || touchLeft) {
+                player.velocityX = -player.speed;
+            } else if (keys['ArrowRight'] || keys['d'] || touchRight) {
+                player.velocityX = player.speed;
+            } else {
+                player.velocityX = 0;
+            }
+            
+            if ((keys['ArrowUp'] || keys[' '] || touchJump) && player.onGround) {
+                player.velocityY = -player.jumpPower;
+                player.onGround = false;
+            }
+            
+            player.velocityY += player.gravity;
+            player.x += player.velocityX;
+            player.y += player.velocityY;
+            
+            if (player.y >= 625) {
+                player.y = 625;
+                player.velocityY = 0;
+                player.onGround = true;
+            }
+            
+            const platforms = [
+                [300, 520], [600, 470], [900, 520], [1200, 440],
+                [1500, 520], [1800, 500], [2100, 520], [2400, 460],
+                [2700, 520], [3000, 480], [3300, 450]
+            ];
+            
+            platforms.forEach(([px, py]) => {
+                if (player.x + player.width/2 > px && 
+                    player.x - player.width/2 < px + 150 &&
+                    player.y + player.height/2 > py && 
+                    player.y + player.height/2 < py + 20 &&
+                    player.velocityY > 0) {
+                    player.y = py - player.height/2;
+                    player.velocityY = 0;
+                    player.onGround = true;
+                }
+            });
+            
+            if (player.x < 20) player.x = 20;
+            if (player.x > 3950) player.x = 3950;
+            
+            cameraX = player.x - 500;
+            if (cameraX < 0) cameraX = 0;
+            if (cameraX > 3000) cameraX = 3000;
+            
+            // Actualizar escorpiones
+            scorpions.forEach(scorpion => {
+                if (scorpion.active) {
+                    scorpion.x += scorpion.velocityX * scorpion.direction;
+                    
+                    if (scorpion.x < 200 || scorpion.x > 3300) {
+                        scorpion.direction *= -1;
+                    }
+                    
+                    if (!player.invincible) {
+                        const dist = Math.abs(player.x - scorpion.x);
+                        if (dist < 40 && Math.abs(player.y - scorpion.y) < 30) {
+                            gameData.lives--;
+                            player.invincible = true;
+                            player.invincibleTimer = 120;
+                            
+                            if (gameData.lives <= 0) {
+                                gameData.scene = 'gameover';
+                            }
+                        }
+                    }
+                }
+            });
+            
+            // Actualizar trampas
+            traps.forEach(trap => {
+                trap.timer++;
+                if (trap.timer % 120 === 0) {
+                    trap.extended = !trap.extended;
+                }
+                
+                if (trap.extended && !player.invincible) {
+                    const dist = Math.abs(player.x - trap.x);
+                    if (dist < 40 && player.y > 620) {
+                        gameData.lives--;
+                        player.invincible = true;
+                        player.invincibleTimer = 120;
+                        
+                        if (gameData.lives <= 0) {
+                            gameData.scene = 'gameover';
+                        }
+                    }
+                }
+            });
+            
+            // Actualizar momia
+            if (gameData.divisionsCorrect >= 10 && mummy.active) {
+                mummy.x += mummy.velocityX * mummy.direction;
+                
+                if (mummy.x < 3250 || mummy.x > 3750) {
+                    mummy.direction *= -1;
+                }
+                
+                if (!player.invincible) {
+                    const distX = Math.abs(player.x - mummy.x);
+                    const distY = Math.abs(player.y - mummy.y);
+                    
+                    if (distX < 50 && distY < 60) {
+                        gameData.coins = 0;
+                        player.invincible = true;
+                        player.invincibleTimer = 120;
+                        player.x -= 100;
+                    }
+                }
+            }
+            
+            if (player.invincible) {
+                player.invincibleTimer--;
+                if (player.invincibleTimer <= 0) {
+                    player.invincible = false;
+                }
+            }
+            
+            // Colisión con templos
+            if (!showingKeypad) {
+                temples.forEach(temple => {
+                    if (!temple.solved && 
+                        Math.abs(player.x - temple.x) < 80 && 
+                        Math.abs(player.y - temple.y) < 80) {
+                        showingKeypad = true;
+                        currentTemple = temple;
+                        playerAnswer = '';
+                    }
+                });
+            }
+            
+            // Colisión con cofre
+            if (gameData.divisionsCorrect >= 10 && treasureChest.locked) {
+                const dist = Math.abs(player.x - treasureChest.x);
+                if (dist < 60 && Math.abs(player.y - treasureChest.y) < 50) {
+                    if (!showingKeypad) {
+                        showingKeypad = true;
+                        currentTemple = { division: treasureChest.division, solved: false };
+                        playerAnswer = '';
+                    }
+                }
+            }
+            
+            // Victoria
+            if (gameData.divisionsCorrect >= 10 && !treasureChest.locked && player.x > 3800) {
+                gameData.scene = 'victory';
+            }
+        }
+
+        function handleClick(x, y) {
+            let buttons = [];
+            
+            if (gameData.scene === 'menu') {
+                buttons = drawMenu();
+            } else if (gameData.scene === 'game' && !showingKeypad) {
+                buttons = drawGame();
+            } else if (gameData.scene === 'game' && showingKeypad) {
+                buttons = drawKeypad();
+            } else if (gameData.scene === 'victory') {
+                buttons = drawVictory();
+            } else if (gameData.scene === 'shop') {
+                buttons = drawShop();
+            } else if (gameData.scene === 'gameover') {
+                buttons = drawGameOver();
+            }
+            
+            buttons.forEach(btn => {
+                if (x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h) {
+                    handleAction(btn);
+                }
+            });
+        }
+
+        function handleAction(btn) {
+            switch(btn.action) {
+                case 'level':
+                    gameData.currentLevel = btn.level;
+                    gameData.scene = 'game';
+                    initGame();
+                    break;
+                case 'shop':
+                    gameData.scene = 'shop';
+                    break;
+                case 'menu':
+                    gameData.scene = 'menu';
+                    gameData.lives = 3;
+                    break;
+                case 'retry':
+                    gameData.lives = 3;
+                    gameData.scene = 'game';
+                    initGame();
+                    break;
+                case 'left':
+                    touchLeft = true;
+                    touchRight = false;
+                    break;
+                case 'right':
+                    touchRight = true;
+                    touchLeft = false;
+                    break;
+                case 'jump':
+                    touchJump = true;
+                    setTimeout(() => touchJump = false, 200);
+                    break;
+                case 'number':
+                    if (playerAnswer.length < 5) {
+                        playerAnswer += btn.value;
+                    }
+                    break;
+                case 'delete':
+                    playerAnswer = playerAnswer.slice(0, -1);
+                    break;
+                case 'check':
+                    if (playerAnswer) {
+                        if (currentTemple === treasureChest || currentTemple.division === treasureChest.division) {
+                            const div = treasureChest.division;
+                            const correctAnswer = Math.floor(div[0] / div[1]);
+                            if (parseInt(playerAnswer) === correctAnswer) {
+                                treasureChest.locked = false;
+                                gameData.coins += 5;
+                            } else {
+                                gameData.coins -= 1;
+                            }
+                            playerAnswer = '';
+                            showingKeypad = false;
+                        } else {
+                            checkAnswer();
+                        }
+                    }
+                    break;
+                case 'buy':
+                    gameData.coins -= btn.price;
+                    gameData.ownedExplorers.push(btn.explorer);
+                    gameData.currentExplorer = btn.explorer;
+                    break;
+                case 'equip':
+                    gameData.currentExplorer = btn.explorer;
+                    break;
+            }
+        }
+
+        // ============ GAME LOOP ============
+        function gameLoop() {
+            ctx.clearRect(0, 0, 1000, 700);
+            
+            if (gameData.scene === 'menu') {
+                drawMenu();
+            } else if (gameData.scene === 'game') {
+                if (!showingKeypad) {
+                    updateGame();
+                }
+                drawGame();
+                if (showingKeypad) {
+                    drawKeypad();
+                }
+            } else if (gameData.scene === 'victory') {
+                drawVictory();
+            } else if (gameData.scene === 'shop') {
+                drawShop();
+            } else if (gameData.scene === 'gameover') {
+                drawGameOver();
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+
+        gameLoop();
+
+        // Registrar Service Worker para PWA
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw_division.js')
+                    .then(registration => {
+                        console.log('Service Worker registrado:', registration.scope);
+                    })
+                    .catch(error => {
+                        console.log('Error al registrar Service Worker:', error);
+                    });
+            });
+        }
+    </script>
+</body>
+</html>
