@@ -1,7 +1,7 @@
-const CACHE_NAME = 'division-quest-v1';
+const CACHE_NAME = 'division-quest-v2';
 const urlsToCache = [
   './',
-  './division_quest.html',
+  './index.html',
   './manifest_division.json'
 ];
 

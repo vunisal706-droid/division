@@ -2,7 +2,7 @@
   "name": "División Quest - Aventura Egipcia",
   "short_name": "División Quest",
   "description": "Juego educativo de divisiones para 4º-6º de primaria",
-  "start_url": "./division_quest.html",
+  "start_url": "./index.html",
   "display": "fullscreen",
   "orientation": "landscape",
   "background_color": "#D4A574",
