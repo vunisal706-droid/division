@@ -90,6 +90,19 @@
             9: [[300,23],[350,24],[400,27],[450,31],[500,33],[550,37],[600,41],[650,43],[700,47],[750,49]]
         };
 
+        // Divisiones EXACTAS para el cofre del tesoro (una por nivel)
+        const chestDivisions = {
+            1: [48, 4],     // = 12
+            2: [100, 5],    // = 20
+            3: [150, 6],    // = 25
+            4: [210, 7],    // = 30
+            5: [256, 8],    // = 32
+            6: [288, 9],    // = 32
+            7: [350, 10],   // = 35
+            8: [440, 11],   // = 40
+            9: [480, 12]    // = 40
+        };
+
         // Exploradores
         const explorers = [
             { name: 'Clásico', id: 'classic', price: 0 },
@@ -911,7 +924,7 @@
             mummy = { x: 3500, y: 580, velocityX: 3, direction: -1, active: true };
             treasureChest = {
                 x: 3700, y: 470, locked: true,
-                division: [gameData.currentLevel * 50, gameData.currentLevel + 3]
+                division: chestDivisions[gameData.currentLevel]
             };
         }
 
