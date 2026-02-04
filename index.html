@@ -137,6 +137,7 @@
         let currentTemple = null;
         let playerAnswer = '';
         let gameTime = 0;
+        let isChestQuestion = false; // Para saber si la pregunta es del cofre
 
         // Input
         const keys = {};
@@ -780,24 +781,72 @@
         }
 
         function handleKeypadClick(x, y) {
-            for (let btn of keypadButtons) {
-                if (x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h) {
+            // Calcular posiciones de botones directamente (igual que en drawKeypad)
+            const panelY = 80;
+            const needsRemainder = gameData.currentLevel >= 7;
+            const inputY = panelY + 140;
+            const inputH = 55;
+            const numStartY = inputY + inputH + (needsRemainder ? 45 : 25);
+            const btnSize = 65;
+            const gap = 12;
+            const numStartX = 500 - (5 * btnSize + 4 * gap) / 2;
+            
+            // Verificar botones numéricos fila 1 (1-5)
+            for (let i = 1; i <= 5; i++) {
+                const bx = numStartX + (i - 1) * (btnSize + gap);
+                const by = numStartY;
+                if (x >= bx && x <= bx + btnSize && y >= by && y <= by + btnSize) {
                     playSound(400, 500, 0.1);
-                    
-                    if (btn.action === 'number') {
-                        if (playerAnswer.length < 5) {
-                            playerAnswer += btn.value;
-                        }
-                    } else if (btn.action === 'delete') {
-                        playerAnswer = playerAnswer.slice(0, -1);
-                    } else if (btn.action === 'check') {
-                        submitAnswer();
-                    } else if (btn.action === 'cancel') {
-                        playerAnswer = '';
-                        showingKeypad = false;
-                    }
+                    if (playerAnswer.length < 5) playerAnswer += i.toString();
                     return;
                 }
+            }
+            
+            // Verificar botones numéricos fila 2 (6-0)
+            for (let i = 6; i <= 10; i++) {
+                const bx = numStartX + (i - 6) * (btnSize + gap);
+                const by = numStartY + btnSize + gap;
+                if (x >= bx && x <= bx + btnSize && y >= by && y <= by + btnSize) {
+                    playSound(400, 500, 0.1);
+                    const num = i === 10 ? '0' : i.toString();
+                    if (playerAnswer.length < 5) playerAnswer += num;
+                    return;
+                }
+            }
+            
+            // Verificar botones de acción
+            const actionY = numStartY + 2 * (btnSize + gap) + 15;
+            const actionW = 150;
+            const actionH = 55;
+            const actionGap = 30;
+            const actionStartX = 500 - (3 * actionW + 2 * actionGap) / 2;
+            
+            // Botón Borrar
+            if (x >= actionStartX && x <= actionStartX + actionW && 
+                y >= actionY && y <= actionY + actionH) {
+                playSound(400, 500, 0.1);
+                playerAnswer = playerAnswer.slice(0, -1);
+                return;
+            }
+            
+            // Botón OK
+            const okX = actionStartX + actionW + actionGap;
+            if (x >= okX && x <= okX + actionW && 
+                y >= actionY && y <= actionY + actionH) {
+                playSound(400, 500, 0.1);
+                submitAnswer();
+                return;
+            }
+            
+            // Botón Salir
+            const cancelX = actionStartX + 2 * (actionW + actionGap);
+            if (x >= cancelX && x <= cancelX + actionW && 
+                y >= actionY && y <= actionY + actionH) {
+                playSound(300, 200, 0.1);
+                playerAnswer = '';
+                showingKeypad = false;
+                isChestQuestion = false;
+                return;
             }
         }
 
@@ -820,8 +869,15 @@
             if (isCorrect) {
                 playSound(523, 784, 0.3);
                 gameData.coins += 2;
-                gameData.divisionsCorrect++;
-                currentTemple.solved = true;
+                
+                // Si es el cofre, desbloquearlo
+                if (isChestQuestion) {
+                    treasureChest.locked = false;
+                    gameData.coins += 5; // Bonus por abrir el cofre
+                } else {
+                    gameData.divisionsCorrect++;
+                    currentTemple.solved = true;
+                }
             } else {
                 playSound(200, 150, 0.3);
                 gameData.coins = Math.max(0, gameData.coins - 1);
@@ -829,6 +885,7 @@
 
             playerAnswer = '';
             showingKeypad = false;
+            isChestQuestion = false;
         }
 
         // ============ ESCENAS ============
@@ -893,6 +950,7 @@
             showingKeypad = false;
             playerAnswer = '';
             gameTime = 0;
+            isChestQuestion = false;
 
             currentDivisions = levelDivisions[gameData.currentLevel];
             temples = [];
@@ -1095,10 +1153,14 @@
                 }
                 if (trap.extended && !player.invincible) {
                     if (Math.abs(player.x - trap.x) < 40 && player.y > 580) {
-                        gameData.coins = Math.max(0, gameData.coins - 2);
+                        gameData.lives--;
                         player.invincible = true;
                         player.invincibleTimer = 90;
                         player.velocityY = -10;
+                        playSound(150, 100, 0.3);
+                        if (gameData.lives <= 0) {
+                            gameData.scene = 'gameover';
+                        }
                     }
                 }
             });
@@ -1119,10 +1181,14 @@
                                 player.velocityY = -10;
                                 playSound(523, 784, 0.2);
                             } else {
-                                gameData.coins = Math.max(0, gameData.coins - 3);
+                                gameData.lives--;
                                 player.invincible = true;
                                 player.invincibleTimer = 120;
                                 player.x -= 80 * s.direction;
+                                playSound(150, 100, 0.3);
+                                if (gameData.lives <= 0) {
+                                    gameData.scene = 'gameover';
+                                }
                             }
                         }
                     }
@@ -1138,10 +1204,14 @@
                     const dx = Math.abs(player.x - mummy.x);
                     const dy = Math.abs(player.y - mummy.y);
                     if (dx < 50 && dy < 60) {
-                        gameData.coins = 0;
+                        gameData.lives--;
                         player.invincible = true;
                         player.invincibleTimer = 120;
                         player.x -= 100;
+                        playSound(100, 80, 0.5);
+                        if (gameData.lives <= 0) {
+                            gameData.scene = 'gameover';
+                        }
                     }
                 }
             }
@@ -1167,6 +1237,7 @@
                 if (Math.abs(player.x - treasureChest.x) < 60 && Math.abs(player.y - treasureChest.y) < 50) {
                     if (!showingKeypad) {
                         showingKeypad = true;
+                        isChestQuestion = true;
                         currentTemple = { division: treasureChest.division, solved: false };
                         playerAnswer = '';
                     }
