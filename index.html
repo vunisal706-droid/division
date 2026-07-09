@@ -48,6 +48,19 @@
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
 
+        // Resolución lógica del juego (todas las coordenadas usan este sistema)
+        const LOGICAL_W = 1000, LOGICAL_H = 700;
+
+        // Renderizado nítido en pantallas de alta densidad
+        function setupCanvasDPR() {
+            const dpr = Math.min(window.devicePixelRatio || 1, 2);
+            canvas.width = LOGICAL_W * dpr;
+            canvas.height = LOGICAL_H * dpr;
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        }
+        setupCanvasDPR();
+        window.addEventListener('resize', setupCanvasDPR);
+
         // Sistema de audio
         const audioContext = new (window.AudioContext || window.webkitAudioContext)();
         
@@ -170,12 +183,38 @@
         document.addEventListener('keyup', (e) => keys[e.key] = false);
 
         // Función para obtener coordenadas del canvas
+        // El canvas usa object-fit: contain, así que el dibujo queda centrado
+        // dentro del elemento con bandas: hay que descontarlas para que el
+        // toque coincida con lo que se ve en pantalla.
         function getCanvasCoords(clientX, clientY) {
             const rect = canvas.getBoundingClientRect();
+            const scale = Math.min(rect.width / LOGICAL_W, rect.height / LOGICAL_H);
+            const contentW = LOGICAL_W * scale;
+            const contentH = LOGICAL_H * scale;
+            const offsetX = rect.left + (rect.width - contentW) / 2;
+            const offsetY = rect.top + (rect.height - contentH) / 2;
             return {
-                x: (clientX - rect.left) * (canvas.width / rect.width),
-                y: (clientY - rect.top) * (canvas.height / rect.height)
+                x: (clientX - offsetX) / scale,
+                y: (clientY - offsetY) / scale
             };
+        }
+
+        // ============ PANTALLA COMPLETA (móvil) ============
+        const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+
+        function goFullscreen() {
+            if (document.fullscreenElement || document.webkitFullscreenElement) return;
+            const el = document.documentElement;
+            const req = el.requestFullscreen || el.webkitRequestFullscreen;
+            if (req) {
+                try {
+                    const p = req.call(el);
+                    if (p && p.catch) p.catch(() => {});
+                } catch (e) {}
+            }
+            if (screen.orientation && screen.orientation.lock) {
+                screen.orientation.lock('landscape').catch(() => {});
+            }
         }
 
         // MOUSE
@@ -197,6 +236,7 @@
         // TOUCH
         canvas.addEventListener('touchstart', (e) => {
             e.preventDefault();
+            goFullscreen();
             for (let touch of e.changedTouches) {
                 const coords = getCanvasCoords(touch.clientX, touch.clientY);
                 handleInteraction(coords.x, coords.y, touch.identifier);
@@ -418,23 +458,134 @@
             ctx.stroke();
         }
 
-        function drawScorpion(x, y) {
-            ctx.fillStyle = '#4A2511';
+        function drawScorpion(x, y, dir = 1) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.scale(dir, 1);
+            const t = gameTime * 0.25;
+
+            // Patas articuladas (4 por lado, animadas)
+            ctx.strokeStyle = '#5C3317';
+            ctx.lineWidth = 2.5;
+            ctx.lineCap = 'round';
+            for (let i = 0; i < 4; i++) {
+                const lx = -11 + i * 7;
+                const sw = Math.sin(t + i * 1.5) * 3;
+                ctx.beginPath();
+                ctx.moveTo(lx, 2);
+                ctx.quadraticCurveTo(lx - 5 + sw, 8, lx - 8 + sw, 14);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(lx, 2);
+                ctx.quadraticCurveTo(lx + 6 - sw, 8, lx + 4 - sw, 14);
+                ctx.stroke();
+            }
+
+            // Cola segmentada curvada hacia arriba
+            const sway = Math.sin(t * 0.8) * 2;
+            const seg = [
+                { x: -16, y: -2, r: 6 },
+                { x: -24, y: -8, r: 5.5 },
+                { x: -29, y: -16, r: 5 },
+                { x: -30, y: -24 + sway, r: 4.5 },
+                { x: -27, y: -31 + sway, r: 4 }
+            ];
+            seg.forEach((s, i) => {
+                ctx.fillStyle = i % 2 === 0 ? '#6B3410' : '#7E4318';
+                ctx.beginPath();
+                ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            // Aguijón
+            const tip = seg[4];
+            ctx.fillStyle = '#3B1F0B';
             ctx.beginPath();
-            ctx.ellipse(x, y, 15, 10, 0, 0, Math.PI * 2);
+            ctx.moveTo(tip.x - 2, tip.y - 3);
+            ctx.quadraticCurveTo(tip.x + 8, tip.y - 11, tip.x + 11, tip.y - 3);
+            ctx.quadraticCurveTo(tip.x + 5, tip.y - 5, tip.x - 2, tip.y + 2);
+            ctx.closePath();
             ctx.fill();
+            ctx.fillStyle = '#E53935';
             ctx.beginPath();
-            ctx.ellipse(x + 12, y, 8, 7, 0, 0, Math.PI * 2);
+            ctx.arc(tip.x + 10, tip.y - 4, 2.2, 0, Math.PI * 2);
             ctx.fill();
-            ctx.strokeStyle = '#8B4513';
-            ctx.lineWidth = 4;
+
+            // Pinza trasera (más oscura, detrás del cuerpo)
+            drawScorpionClaw(20, -7, t, true);
+
+            // Cuerpo (abdomen segmentado con volumen)
+            const bodyGrad = ctx.createLinearGradient(0, -9, 0, 8);
+            bodyGrad.addColorStop(0, '#8A4B1F');
+            bodyGrad.addColorStop(1, '#4A2511');
+            ctx.fillStyle = bodyGrad;
             ctx.beginPath();
-            ctx.moveTo(x - 15, y);
-            ctx.quadraticCurveTo(x - 25, y - 5, x - 30, y - 15);
+            ctx.ellipse(-2, 0, 16, 8, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+            ctx.lineWidth = 1.5;
+            for (let i = -1; i <= 1; i++) {
+                ctx.beginPath();
+                ctx.moveTo(-2 + i * 6, -7);
+                ctx.quadraticCurveTo(-4 + i * 6, 0, -2 + i * 6, 7);
+                ctx.stroke();
+            }
+            // Brillo superior
+            ctx.fillStyle = 'rgba(255,220,170,0.25)';
+            ctx.beginPath();
+            ctx.ellipse(-3, -4, 10, 2.5, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Cabeza
+            ctx.fillStyle = '#6B3410';
+            ctx.beginPath();
+            ctx.ellipse(13, -1, 7, 6, 0, 0, Math.PI * 2);
+            ctx.fill();
+            // Ojos
+            ctx.fillStyle = '#FFF';
+            ctx.beginPath(); ctx.arc(14, -4, 2.6, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#111';
+            ctx.beginPath(); ctx.arc(15, -4, 1.3, 0, Math.PI * 2); ctx.fill();
+            // Ceño enfadado
+            ctx.strokeStyle = '#2E1505';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(11, -8); ctx.lineTo(17, -6);
             ctx.stroke();
-            ctx.fillStyle = '#FF0000';
+
+            // Pinza delantera
+            drawScorpionClaw(23, 5, t, false);
+
+            ctx.restore();
+        }
+
+        function drawScorpionClaw(px, py, t, dark) {
+            const pinch = Math.sin(t) * 2;
+            // Brazo
+            ctx.strokeStyle = dark ? '#5C3317' : '#7E4318';
+            ctx.lineWidth = 4;
+            ctx.lineCap = 'round';
             ctx.beginPath();
-            ctx.arc(x - 30, y - 15, 3, 0, Math.PI * 2);
+            ctx.moveTo(12, py * 0.4);
+            ctx.quadraticCurveTo(18, py - 2, px - 4, py);
+            ctx.stroke();
+            // Palma
+            ctx.fillStyle = dark ? '#5C3317' : '#8A4B1F';
+            ctx.beginPath();
+            ctx.ellipse(px + 2, py, 6.5, 5, -0.15, 0, Math.PI * 2);
+            ctx.fill();
+            // Dedos de la pinza (abren y cierran)
+            ctx.fillStyle = dark ? '#4A2511' : '#6B3410';
+            ctx.beginPath();
+            ctx.moveTo(px + 5, py - 3);
+            ctx.quadraticCurveTo(px + 14, py - 7 - pinch, px + 13, py - 1);
+            ctx.quadraticCurveTo(px + 9, py - 3, px + 5, py - 1);
+            ctx.closePath();
+            ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(px + 5, py + 3);
+            ctx.quadraticCurveTo(px + 14, py + 7 + pinch, px + 13, py + 1);
+            ctx.quadraticCurveTo(px + 9, py + 3, px + 5, py + 1);
+            ctx.closePath();
             ctx.fill();
         }
 
@@ -454,26 +605,66 @@
         }
 
         function drawMummy(x, y) {
-            ctx.fillStyle = '#F5F5DC';
-            ctx.fillRect(x - 15, y - 40, 30, 50);
-            ctx.fillRect(x - 12, y - 55, 24, 25);
-            ctx.fillRect(x - 30, y - 30, 15, 10);
-            ctx.fillRect(x + 15, y - 30, 15, 10);
-            ctx.fillRect(x - 12, y + 10, 10, 20);
-            ctx.fillRect(x + 2, y + 10, 10, 20);
-            ctx.strokeStyle = '#D3D3D3';
-            ctx.lineWidth = 2;
-            for (let i = 0; i < 8; i++) {
+            const t = gameTime * 0.15;
+            const bob = Math.sin(t) * 2;
+            ctx.save();
+            ctx.translate(0, bob);
+            // Piernas arrastrando
+            ctx.fillStyle = '#E8E4D0';
+            ctx.fillRect(x - 12, y + 8, 9, 22);
+            ctx.fillRect(x + 3, y + 8, 9, 22);
+            // Cuerpo redondeado
+            ctx.fillStyle = '#F1EDDA';
+            ctx.beginPath();
+            ctx.moveTo(x - 16, y - 34);
+            ctx.quadraticCurveTo(x - 20, y - 10, x - 15, y + 10);
+            ctx.lineTo(x + 15, y + 10);
+            ctx.quadraticCurveTo(x + 20, y - 10, x + 16, y - 34);
+            ctx.quadraticCurveTo(x, y - 46, x - 16, y - 34);
+            ctx.closePath();
+            ctx.fill();
+            // Brazos extendidos hacia delante (¡uuuh!)
+            ctx.fillStyle = '#E8E4D0';
+            ctx.save();
+            ctx.translate(x, y - 22);
+            ctx.rotate(Math.sin(t) * 0.08 - 0.1);
+            ctx.fillRect(-32, -4, 26, 9);
+            ctx.restore();
+            ctx.save();
+            ctx.translate(x, y - 12);
+            ctx.rotate(-Math.sin(t) * 0.08 + 0.08);
+            ctx.fillRect(-34, -4, 26, 9);
+            ctx.restore();
+            // Vendas cruzadas
+            ctx.strokeStyle = '#CFC9AE';
+            ctx.lineWidth = 2.5;
+            for (let i = 0; i < 6; i++) {
                 ctx.beginPath();
-                ctx.moveTo(x - 15, y - 35 + i * 10);
-                ctx.lineTo(x + 15, y - 35 + i * 10);
+                ctx.moveTo(x - 17, y - 32 + i * 8);
+                ctx.quadraticCurveTo(x, y - 28 + i * 8, x + 17, y - 34 + i * 8);
                 ctx.stroke();
             }
-            ctx.fillStyle = '#8B0000';
+            // Vendas sueltas ondeando
+            ctx.strokeStyle = '#E8E4D0';
+            ctx.lineWidth = 3;
             ctx.beginPath();
-            ctx.arc(x - 5, y - 48, 4, 0, Math.PI * 2);
-            ctx.arc(x + 5, y - 48, 4, 0, Math.PI * 2);
+            ctx.moveTo(x + 14, y - 36);
+            ctx.quadraticCurveTo(x + 24, y - 32 + Math.sin(t * 2) * 4, x + 30, y - 26 + Math.sin(t * 2) * 6);
+            ctx.stroke();
+            // Ojos rojos brillantes entre las vendas
+            ctx.fillStyle = '#2B2B2B';
+            ctx.fillRect(x - 12, y - 40, 24, 9);
+            ctx.fillStyle = '#FF3B30';
+            ctx.beginPath();
+            ctx.arc(x - 5, y - 35.5, 3.2, 0, Math.PI * 2);
+            ctx.arc(x + 6, y - 35.5, 3.2, 0, Math.PI * 2);
             ctx.fill();
+            ctx.fillStyle = '#FFB3AE';
+            ctx.beginPath();
+            ctx.arc(x - 4, y - 36.5, 1.1, 0, Math.PI * 2);
+            ctx.arc(x + 7, y - 36.5, 1.1, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
         }
 
         function drawTreasureChest(x, y, locked) {
@@ -503,12 +694,19 @@
         }
 
         // ============ EXPLORADORES ============
-        function drawExplorer(x, y, type) {
-            ctx.save();
-            ctx.translate(x, y);
-            ctx.scale(PLAYER_SCALE, PLAYER_SCALE);
-            ctx.translate(-x, -y);
+        let expWalk = 0;
 
+        function drawExplorer(x, y, type, facing = 1, moving = false) {
+            expWalk = moving ? Math.sin(gameTime * 0.35) : 0;
+            const bob = moving ? -Math.abs(Math.cos(gameTime * 0.35)) * 1.5 : 0;
+            ctx.save();
+            ctx.translate(x, y + bob);
+            ctx.scale(PLAYER_SCALE * facing, PLAYER_SCALE);
+            drawExplorerType(0, 0, type);
+            ctx.restore();
+        }
+
+        function drawExplorerType(x, y, type) {
             switch(type) {
                 case 'classic': drawClassicExplorer(x, y); break;
                 case 'indiana': drawIndianaExplorer(x, y); break;
@@ -518,128 +716,371 @@
                 case 'cleopatra': drawCleopatraExplorer(x, y); break;
                 case 'anubis': drawAnubisExplorer(x, y); break;
             }
-            ctx.restore();
         }
 
+        // --- Piezas comunes ---
+        function rrFill(x, y, w, h, r, color) {
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.moveTo(x + r, y);
+            ctx.arcTo(x + w, y, x + w, y + h, r);
+            ctx.arcTo(x + w, y + h, x, y + h, r);
+            ctx.arcTo(x, y + h, x, y, r);
+            ctx.arcTo(x, y, x + w, y, r);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        function drawExpLegs(x, y, color, bootColor) {
+            const s = expWalk * 4;
+            rrFill(x - 7 + s, y + 8, 6, 14, 2.5, color);
+            rrFill(x + 1 - s, y + 8, 6, 14, 2.5, color);
+            rrFill(x - 7 + s, y + 20, 8, 5, 2, bootColor);
+            rrFill(x + 1 - s, y + 20, 8, 5, 2, bootColor);
+        }
+
+        function drawExpArms(x, y, sleeve, skin) {
+            const s = expWalk * 3;
+            rrFill(x - 14, y - 6 + s, 6, 11, 3, sleeve);
+            rrFill(x + 8, y - 6 - s, 6, 11, 3, sleeve);
+            drawCircle(x - 11, y + 6 + s, 3, skin);
+            drawCircle(x + 11, y + 6 - s, 3, skin);
+        }
+
+        function drawExpFace(x, y, skin, mouth = '#8D5524') {
+            drawCircle(x, y - 20, 12, skin);
+            // Orejita
+            drawCircle(x - 11, y - 20, 2.5, skin);
+            // Ojos con brillo
+            ctx.fillStyle = '#FFF';
+            ctx.beginPath();
+            ctx.arc(x - 3, y - 22, 3, 0, Math.PI * 2);
+            ctx.arc(x + 5, y - 22, 3, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#2B1B0E';
+            ctx.beginPath();
+            ctx.arc(x - 2.2, y - 22, 1.5, 0, Math.PI * 2);
+            ctx.arc(x + 5.8, y - 22, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#FFF';
+            ctx.beginPath();
+            ctx.arc(x - 1.7, y - 22.6, 0.6, 0, Math.PI * 2);
+            ctx.arc(x + 6.3, y - 22.6, 0.6, 0, Math.PI * 2);
+            ctx.fill();
+            // Nariz
+            ctx.fillStyle = 'rgba(0,0,0,0.15)';
+            ctx.beginPath(); ctx.arc(x + 1.5, y - 18.5, 1.3, 0, Math.PI * 2); ctx.fill();
+            // Sonrisa
+            ctx.strokeStyle = mouth;
+            ctx.lineWidth = 1.6;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.arc(x + 1, y - 16.5, 4, 0.2 * Math.PI, 0.8 * Math.PI);
+            ctx.stroke();
+        }
+
+        // --- Clásico: explorador de safari con salacot ---
         function drawClassicExplorer(x, y) {
-            drawCircle(x, y - 20, 12, '#FFDBAC');
-            ctx.fillStyle = '#000';
-            ctx.fillRect(x - 4, y - 23, 2, 2);
-            ctx.fillRect(x + 2, y - 23, 2, 2);
-            ctx.fillStyle = '#D2B48C';
-            ctx.fillRect(x - 15, y - 30, 30, 5);
-            ctx.fillRect(x - 10, y - 35, 20, 8);
-            drawRect(x - 7, y - 8, 14, 18, '#9B8B54');
-            drawRect(x - 13, y - 5, 6, 12, '#9B8B54');
-            drawRect(x + 7, y - 5, 6, 12, '#9B8B54');
-            drawRect(x - 7, y + 10, 6, 15, '#654321');
-            drawRect(x + 1, y + 10, 6, 15, '#654321');
+            drawExpLegs(x, y, '#8A7A4E', '#5D4037');
+            rrFill(x - 8, y - 9, 16, 19, 4, '#B3A268');
+            // Bolsillos y botones
+            ctx.fillStyle = '#968550';
+            ctx.fillRect(x - 6, y - 3, 5, 4);
+            ctx.fillRect(x + 1, y - 3, 5, 4);
+            ctx.fillStyle = '#4E3620';
+            ctx.fillRect(x - 0.7, y - 8, 1.4, 14);
+            // Prismáticos colgados
+            ctx.strokeStyle = '#4E3620';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(x - 6, y - 9);
+            ctx.quadraticCurveTo(x, y - 2, x + 6, y - 9);
+            ctx.stroke();
+            ctx.fillStyle = '#333';
+            ctx.fillRect(x - 3.5, y - 4, 3, 4.5);
+            ctx.fillRect(x + 0.5, y - 4, 3, 4.5);
+            drawExpArms(x, y, '#B3A268', '#FFDBAC');
+            drawExpFace(x, y, '#FFDBAC');
+            // Salacot
+            ctx.fillStyle = '#D9C79A';
+            ctx.beginPath();
+            ctx.ellipse(x, y - 28, 16, 4.5, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(x, y - 29, 11, Math.PI, 0);
+            ctx.fill();
+            ctx.fillStyle = '#B7A377';
+            ctx.fillRect(x - 11, y - 31, 22, 3);
         }
 
+        // --- Indiana: fedora, chaqueta de cuero, látigo y zurrón ---
         function drawIndianaExplorer(x, y) {
-            drawCircle(x, y - 20, 12, '#FFDBAC');
-            ctx.fillStyle = '#000';
-            ctx.fillRect(x - 4, y - 23, 2, 2);
-            ctx.fillRect(x + 2, y - 23, 2, 2);
-            ctx.fillStyle = '#654321';
-            ctx.fillRect(x - 18, y - 30, 36, 4);
-            ctx.fillRect(x - 12, y - 38, 24, 10);
-            drawRect(x - 7, y - 8, 14, 18, '#8B4513');
-            drawRect(x - 13, y - 5, 6, 12, '#8B4513');
-            drawRect(x + 7, y - 5, 6, 12, '#8B4513');
-            drawRect(x - 7, y + 10, 6, 15, '#654321');
-            drawRect(x + 1, y + 10, 6, 15, '#654321');
+            drawExpLegs(x, y, '#5D4037', '#3E2723');
+            // Chaqueta de cuero
+            rrFill(x - 8, y - 9, 16, 19, 4, '#6D4C2F');
+            // Camisa asomando
+            ctx.fillStyle = '#F5F0DC';
+            ctx.beginPath();
+            ctx.moveTo(x - 3, y - 9);
+            ctx.lineTo(x + 3, y - 9);
+            ctx.lineTo(x, y + 2);
+            ctx.closePath();
+            ctx.fill();
+            // Solapas
+            ctx.strokeStyle = '#4E3620';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.moveTo(x - 3, y - 9); ctx.lineTo(x - 6, y - 1); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(x + 3, y - 9); ctx.lineTo(x + 6, y - 1); ctx.stroke();
+            // Correa del zurrón
+            ctx.strokeStyle = '#8D6E43';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(x - 7, y - 8);
+            ctx.lineTo(x + 7, y + 5);
+            ctx.stroke();
+            // Cinturón con hebilla
+            rrFill(x - 8, y + 6, 16, 4, 1, '#3E2723');
+            ctx.fillStyle = '#D4AF37';
+            ctx.fillRect(x - 2, y + 6.5, 4, 3);
+            // Látigo enrollado en la cadera
+            ctx.strokeStyle = '#8B5A2B';
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.arc(x - 10, y + 9, 4.2, 0, Math.PI * 2); ctx.stroke();
+            ctx.beginPath(); ctx.arc(x - 10, y + 9, 2, 0, Math.PI * 2); ctx.stroke();
+            drawExpArms(x, y, '#6D4C2F', '#FFDBAC');
+            drawExpFace(x, y, '#FFDBAC');
+            // Barba incipiente
+            ctx.fillStyle = 'rgba(78,54,32,0.22)';
+            ctx.beginPath();
+            ctx.ellipse(x + 0.5, y - 14, 7, 4, 0, 0, Math.PI);
+            ctx.fill();
+            // Fedora: ala, copa con pliegue y cinta
+            ctx.fillStyle = '#5D4630';
+            ctx.beginPath();
+            ctx.ellipse(x, y - 29, 17, 4.5, 0, 0, Math.PI * 2);
+            ctx.fill();
+            rrFill(x - 10, y - 40, 20, 12, 4, '#6B5138');
+            ctx.fillStyle = '#3E2E1E';
+            ctx.fillRect(x - 10, y - 31.5, 20, 3.5);
+            ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(x - 4, y - 39);
+            ctx.quadraticCurveTo(x, y - 36, x + 4, y - 39);
+            ctx.stroke();
         }
 
+        // --- Arqueóloga: chaleco, gafas, coleta y pincel ---
         function drawArchaeologistExplorer(x, y) {
-            drawCircle(x, y - 20, 12, '#FFDBAC');
-            ctx.fillStyle = '#8B4513';
-            ctx.fillRect(x - 12, y - 28, 24, 15);
-            drawRect(x - 7, y - 8, 14, 18, '#D2B48C');
-            drawRect(x - 13, y - 5, 6, 12, '#FFF');
-            drawRect(x + 7, y - 5, 6, 12, '#FFF');
-            drawRect(x - 7, y + 10, 6, 15, '#4682B4');
-            drawRect(x + 1, y + 10, 6, 15, '#4682B4');
+            drawExpLegs(x, y, '#4682B4', '#5D4037');
+            rrFill(x - 8, y - 9, 16, 19, 4, '#FFFFFF');
+            rrFill(x - 8, y - 9, 5.5, 19, 2, '#C8A05A');
+            rrFill(x + 2.5, y - 9, 5.5, 19, 2, '#C8A05A');
+            // Pincel en el cinturón
+            ctx.strokeStyle = '#8B5A2B';
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(x + 6, y + 6); ctx.lineTo(x + 9, y); ctx.stroke();
+            ctx.fillStyle = '#DAA520';
+            ctx.fillRect(x + 8, y - 3.5, 3.5, 4);
+            drawExpArms(x, y, '#FFFFFF', '#FFDBAC');
+            drawExpFace(x, y, '#FFDBAC');
+            // Coleta
+            ctx.fillStyle = '#6B4423';
+            ctx.beginPath();
+            ctx.ellipse(x - 12, y - 15, 3.5, 7, 0.4, 0, Math.PI * 2);
+            ctx.fill();
+            // Gafas redondas
+            ctx.strokeStyle = '#4E342E';
+            ctx.lineWidth = 1.4;
+            ctx.beginPath(); ctx.arc(x - 3, y - 22, 4, 0, Math.PI * 2); ctx.stroke();
+            ctx.beginPath(); ctx.arc(x + 5, y - 22, 4, 0, Math.PI * 2); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(x + 0.7, y - 22.5); ctx.lineTo(x + 1.3, y - 22.5); ctx.stroke();
+            // Sombrero de ala ancha
+            ctx.fillStyle = '#8B5E34';
+            ctx.beginPath();
+            ctx.ellipse(x, y - 28.5, 16, 4.5, 0, 0, Math.PI * 2);
+            ctx.fill();
+            rrFill(x - 9, y - 38, 18, 11, 4, '#9C6B3C');
+            ctx.fillStyle = '#E07A5F';
+            ctx.fillRect(x - 9, y - 30.5, 18, 3);
         }
 
+        // --- Aventurero: pañuelo rojo y mochila ---
         function drawAdventurerExplorer(x, y) {
-            drawCircle(x, y - 20, 12, '#FFDBAC');
-            ctx.fillStyle = '#DC143C';
-            ctx.fillRect(x - 12, y - 30, 24, 5);
-            drawRect(x - 7, y - 8, 14, 18, '#556B2F');
-            drawRect(x - 13, y - 5, 6, 12, '#556B2F');
-            drawRect(x + 7, y - 5, 6, 12, '#556B2F');
-            drawRect(x - 7, y + 10, 6, 15, '#8B7355');
-            drawRect(x + 1, y + 10, 6, 15, '#8B7355');
+            drawExpLegs(x, y, '#8B7355', '#4E342E');
+            // Mochila asomando por detrás
+            rrFill(x - 13, y - 8, 6, 13, 3, '#A0522D');
+            rrFill(x - 8, y - 9, 16, 19, 4, '#5B7431');
+            // Correas
+            ctx.strokeStyle = '#3E2E1E';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath(); ctx.moveTo(x - 5, y - 9); ctx.lineTo(x - 5, y + 5); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(x + 5, y - 9); ctx.lineTo(x + 5, y + 5); ctx.stroke();
+            drawExpArms(x, y, '#5B7431', '#E8B98B');
+            drawExpFace(x, y, '#E8B98B');
+            // Pelo
+            ctx.fillStyle = '#3E2723';
+            ctx.beginPath();
+            ctx.arc(x, y - 23, 11.5, Math.PI * 1.02, Math.PI * 1.98);
+            ctx.fill();
+            // Pañuelo rojo con nudo
+            ctx.fillStyle = '#D32F2F';
+            ctx.beginPath();
+            ctx.moveTo(x - 12, y - 27);
+            ctx.quadraticCurveTo(x, y - 34, x + 12, y - 27);
+            ctx.lineTo(x + 10, y - 23);
+            ctx.quadraticCurveTo(x, y - 29, x - 10, y - 23);
+            ctx.closePath();
+            ctx.fill();
+            ctx.beginPath(); ctx.arc(x - 11, y - 25, 2.5, 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = '#B71C1C';
+            ctx.lineWidth = 2.5;
+            ctx.lineCap = 'round';
+            ctx.beginPath(); ctx.moveTo(x - 12, y - 24); ctx.lineTo(x - 16, y - 18); ctx.stroke();
         }
 
+        // --- Faraón: nemes azul y oro, collar y cobra ---
         function drawPharaohExplorer(x, y) {
-            drawCircle(x, y - 20, 12, '#D2691E');
-            ctx.fillStyle = '#4169E1';
-            ctx.fillRect(x - 15, y - 32, 30, 15);
-            ctx.fillStyle = '#FFD700';
-            ctx.fillRect(x - 15, y - 32, 30, 3);
-            ctx.fillRect(x - 15, y - 25, 30, 2);
-            drawRect(x - 7, y - 8, 14, 18, '#FFF');
-            ctx.fillStyle = '#FFD700';
-            ctx.fillRect(x - 10, y - 8, 20, 3);
-            drawRect(x - 13, y - 5, 6, 12, '#FFF');
-            drawRect(x + 7, y - 5, 6, 12, '#FFF');
-            drawRect(x - 7, y + 10, 6, 15, '#4169E1');
-            drawRect(x + 1, y + 10, 6, 15, '#4169E1');
+            drawExpLegs(x, y, '#F5F0DC', '#C9A227');
+            rrFill(x - 8, y - 9, 16, 19, 4, '#F7F3E3');
+            // Faldón dorado
+            rrFill(x - 2.5, y - 1, 5, 12, 1.5, '#E6B422');
+            // Collar
+            ctx.fillStyle = '#E6B422';
+            ctx.beginPath();
+            ctx.ellipse(x, y - 8, 9, 5, 0, 0, Math.PI);
+            ctx.fill();
+            ctx.strokeStyle = '#1E56B0';
+            ctx.lineWidth = 1.2;
+            ctx.beginPath();
+            ctx.ellipse(x, y - 8, 6, 3.2, 0, 0, Math.PI);
+            ctx.stroke();
+            drawExpArms(x, y, '#D2691E', '#D2691E');
+            // Brazaletes
+            ctx.fillStyle = '#E6B422';
+            ctx.fillRect(x - 14, y + 1, 6, 2.5);
+            ctx.fillRect(x + 8, y + 1, 6, 2.5);
+            drawExpFace(x, y, '#D2691E', '#5C2E0D');
+            // Nemes
+            ctx.fillStyle = '#2456C4';
+            ctx.beginPath();
+            ctx.moveTo(x - 13, y - 29);
+            ctx.quadraticCurveTo(x, y - 40, x + 13, y - 29);
+            ctx.lineTo(x + 13, y - 11);
+            ctx.lineTo(x + 8, y - 11);
+            ctx.lineTo(x + 9, y - 25);
+            ctx.quadraticCurveTo(x, y - 33, x - 9, y - 25);
+            ctx.lineTo(x - 8, y - 11);
+            ctx.lineTo(x - 13, y - 11);
+            ctx.closePath();
+            ctx.fill();
+            ctx.strokeStyle = '#E6B422';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(x - 12, y - 27);
+            ctx.quadraticCurveTo(x, y - 37, x + 12, y - 27);
+            ctx.stroke();
+            ctx.fillStyle = '#E6B422';
+            ctx.fillRect(x - 13, y - 15, 5, 2.5);
+            ctx.fillRect(x + 8, y - 15, 5, 2.5);
+            // Cobra en la frente
+            ctx.beginPath(); ctx.arc(x, y - 33, 2.3, 0, Math.PI * 2); ctx.fill();
         }
 
+        // --- Cleopatra: melena egipcia, diadema y kohl ---
         function drawCleopatraExplorer(x, y) {
-            drawCircle(x, y - 20, 12, '#D2691E');
-            ctx.fillStyle = '#000';
-            ctx.fillRect(x - 12, y - 30, 24, 15);
-            ctx.fillStyle = '#FFD700';
-            ctx.fillRect(x - 12, y - 30, 24, 3);
-            drawRect(x - 7, y - 8, 14, 18, '#FFF');
-            drawRect(x - 13, y - 5, 6, 12, '#FFF');
-            drawRect(x + 7, y - 5, 6, 12, '#FFF');
-            drawRect(x - 7, y + 10, 6, 15, '#9370DB');
-            drawRect(x + 1, y + 10, 6, 15, '#9370DB');
+            drawExpLegs(x, y, '#F7F3E3', '#C9A227');
+            rrFill(x - 8, y - 9, 16, 19, 4, '#F7F3E3');
+            ctx.fillStyle = '#8E44AD';
+            ctx.fillRect(x - 8, y + 3, 16, 4);
+            ctx.fillStyle = '#E6B422';
+            ctx.beginPath();
+            ctx.ellipse(x, y - 8, 9, 5, 0, 0, Math.PI);
+            ctx.fill();
+            drawExpArms(x, y, '#D2691E', '#D2691E');
+            ctx.fillStyle = '#E6B422';
+            ctx.fillRect(x - 14, y + 1, 6, 2.5);
+            ctx.fillRect(x + 8, y + 1, 6, 2.5);
+            drawExpFace(x, y, '#D2691E', '#8E2C48');
+            // Kohl (delineado egipcio)
+            ctx.strokeStyle = '#161616';
+            ctx.lineWidth = 1.2;
+            ctx.beginPath(); ctx.moveTo(x + 0.5, y - 22); ctx.lineTo(x + 2.5, y - 23); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(x + 8.5, y - 22); ctx.lineTo(x + 10.5, y - 23); ctx.stroke();
+            // Melena negra egipcia
+            ctx.fillStyle = '#161616';
+            ctx.beginPath();
+            ctx.moveTo(x - 13, y - 28);
+            ctx.quadraticCurveTo(x, y - 38, x + 13, y - 28);
+            ctx.lineTo(x + 12, y - 9);
+            ctx.lineTo(x + 7.5, y - 9);
+            ctx.lineTo(x + 8.5, y - 25);
+            ctx.quadraticCurveTo(x, y - 31, x - 8.5, y - 25);
+            ctx.lineTo(x - 7.5, y - 9);
+            ctx.lineTo(x - 12, y - 9);
+            ctx.closePath();
+            ctx.fill();
+            // Flequillo
+            ctx.fillRect(x - 9, y - 30, 18, 3.5);
+            // Diadema dorada con gema
+            ctx.fillStyle = '#E6B422';
+            ctx.fillRect(x - 12.5, y - 31.5, 25, 2.5);
+            ctx.beginPath(); ctx.arc(x + 1, y - 32.5, 2, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#1E9E7B';
+            ctx.beginPath(); ctx.arc(x + 1, y - 32.5, 1, 0, Math.PI * 2); ctx.fill();
         }
 
+        // --- Anubis: chacal negro con detalles dorados ---
         function drawAnubisExplorer(x, y) {
-            ctx.fillStyle = '#000';
-            ctx.fillRect(x - 10, y - 30, 20, 20);
+            drawExpLegs(x, y, '#2F4F4F', '#1C1C1C');
+            rrFill(x - 8, y - 9, 16, 19, 4, '#1C1C1C');
+            rrFill(x - 2, y - 2, 4, 13, 1, '#E6B422');
+            ctx.fillStyle = '#E6B422';
             ctx.beginPath();
-            ctx.moveTo(x - 10, y - 30);
-            ctx.lineTo(x - 15, y - 40);
-            ctx.lineTo(x - 5, y - 30);
-            ctx.closePath();
+            ctx.ellipse(x, y - 8, 9, 5, 0, 0, Math.PI);
             ctx.fill();
+            drawExpArms(x, y, '#1C1C1C', '#2B2B2B');
+            // Cabeza de chacal
+            ctx.fillStyle = '#1C1C1C';
             ctx.beginPath();
-            ctx.moveTo(x + 10, y - 30);
-            ctx.lineTo(x + 15, y - 40);
-            ctx.lineTo(x + 5, y - 30);
-            ctx.closePath();
+            ctx.ellipse(x, y - 21, 10, 9, 0, 0, Math.PI * 2);
             ctx.fill();
-            ctx.fillStyle = '#FFD700';
+            // Hocico
             ctx.beginPath();
-            ctx.arc(x - 4, y - 24, 3, 0, Math.PI * 2);
-            ctx.arc(x + 4, y - 24, 3, 0, Math.PI * 2);
+            ctx.ellipse(x + 10, y - 18, 7, 4, -0.15, 0, Math.PI * 2);
             ctx.fill();
-            drawRect(x - 7, y - 8, 14, 18, '#000');
-            ctx.fillStyle = '#FFD700';
-            ctx.fillRect(x - 2, y - 5, 4, 15);
-            drawRect(x - 13, y - 5, 6, 12, '#000');
-            drawRect(x + 7, y - 5, 6, 12, '#000');
-            drawRect(x - 7, y + 10, 6, 15, '#2F4F4F');
-            drawRect(x + 1, y + 10, 6, 15, '#2F4F4F');
+            ctx.fillStyle = '#E6B422';
+            ctx.beginPath(); ctx.arc(x + 16, y - 19.5, 1.4, 0, Math.PI * 2); ctx.fill();
+            // Orejas altas con interior dorado
+            ctx.fillStyle = '#1C1C1C';
+            ctx.beginPath();
+            ctx.moveTo(x - 8, y - 26); ctx.lineTo(x - 10, y - 42); ctx.lineTo(x - 1, y - 28);
+            ctx.closePath(); ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(x + 2, y - 28); ctx.lineTo(x + 5, y - 43); ctx.lineTo(x + 10, y - 26);
+            ctx.closePath(); ctx.fill();
+            ctx.fillStyle = '#E6B422';
+            ctx.beginPath();
+            ctx.moveTo(x - 7.5, y - 29); ctx.lineTo(x - 9, y - 38); ctx.lineTo(x - 4, y - 30);
+            ctx.closePath(); ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(x + 3.5, y - 30); ctx.lineTo(x + 5.5, y - 39); ctx.lineTo(x + 8.5, y - 29);
+            ctx.closePath(); ctx.fill();
+            // Ojo dorado
+            ctx.beginPath(); ctx.arc(x + 3, y - 23, 2.2, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#1C1C1C';
+            ctx.beginPath(); ctx.arc(x + 3.8, y - 23, 1, 0, Math.PI * 2); ctx.fill();
         }
 
         function drawPlayer() {
             const x = player.x - cameraX;
             const y = player.y;
             if (player.invincible && Math.floor(Date.now() / 100) % 2 === 0) return;
-            drawExplorer(x, y, gameData.currentExplorer);
+            if (player.velocityX > 0.1) player.facing = 1;
+            else if (player.velocityX < -0.1) player.facing = -1;
+            const moving = Math.abs(player.velocityX) > 0.1 && player.onGround;
+            drawExplorer(x, y, gameData.currentExplorer, player.facing || 1, moving);
         }
-
-        // ============ KEYPAD MEJORADO ============
-        let keypadButtons = [];
 
         function drawKeypad() {
             // Overlay oscuro
@@ -890,35 +1331,12 @@
 
         // ============ ESCENAS ============
         function drawMenu() {
-            const gradient = ctx.createLinearGradient(0, 0, 0, 700);
-            gradient.addColorStop(0, '#87CEEB');
-            gradient.addColorStop(0.6, '#F4A460');
-            gradient.addColorStop(1, '#DEB887');
-            ctx.fillStyle = gradient;
-            ctx.fillRect(0, 0, 1000, 700);
-
-            // Sol
-            drawCircle(850, 100, 60, '#FFD700');
-
-            // Pirámides de fondo
-            ctx.fillStyle = '#C9A876';
-            ctx.beginPath();
-            ctx.moveTo(150, 350);
-            ctx.lineTo(250, 150);
-            ctx.lineTo(350, 350);
-            ctx.closePath();
-            ctx.fill();
-
-            ctx.beginPath();
-            ctx.moveTo(600, 350);
-            ctx.lineTo(720, 120);
-            ctx.lineTo(840, 350);
-            ctx.closePath();
-            ctx.fill();
+            drawDesertScene(gameTime * 0.6);
+            drawDesertGround(gameTime * 0.6);
 
             drawText('🏺 DIVISIÓN QUEST', 500, 80, 52, '#8B4513', 'center', true);
             drawText('Aventura Egipcia', 500, 140, 38, '#D2691E', 'center', true);
-            drawText(`💰 ${gameData.coins}  ❤️ ${gameData.lives}`, 500, 210, 32, '#FFD700', 'center');
+            drawText(`💰 ${gameData.coins}  ❤️ ${gameData.lives}`, 500, 210, 32, '#8B4513', 'center');
 
             const buttons = [];
             for (let i = 1; i <= 9; i++) {
@@ -936,6 +1354,177 @@
             buttons.push({ ...shopBtn, action: 'shop' });
 
             return buttons;
+        }
+
+
+        // ============ FONDO DESIERTO ============
+        function drawDesertScene(pcam) {
+            // Cielo
+            const sky = ctx.createLinearGradient(0, 0, 0, 660);
+            sky.addColorStop(0, '#5EB3E4');
+            sky.addColorStop(0.45, '#9FD4F0');
+            sky.addColorStop(0.75, '#FFE3B3');
+            sky.addColorStop(1, '#F6C98F');
+            ctx.fillStyle = sky;
+            ctx.fillRect(0, 0, 1000, 700);
+
+            // Sol con halo
+            const glow = ctx.createRadialGradient(860, 105, 10, 860, 105, 130);
+            glow.addColorStop(0, 'rgba(255, 236, 160, 0.9)');
+            glow.addColorStop(1, 'rgba(255, 236, 160, 0)');
+            ctx.fillStyle = glow;
+            ctx.fillRect(720, -30, 280, 280);
+            drawCircle(860, 105, 42, '#FFD760');
+            drawCircle(860, 105, 34, '#FFE99A');
+
+            // Pájaros lejanos
+            ctx.strokeStyle = 'rgba(90, 70, 50, 0.45)';
+            ctx.lineWidth = 2;
+            ctx.lineCap = 'round';
+            for (let i = 0; i < 3; i++) {
+                const bx = ((gameTime * 0.4 + i * 300) % 1200) - 100;
+                const by = 85 + i * 38 + Math.sin(gameTime * 0.05 + i * 2) * 6;
+                ctx.beginPath();
+                ctx.moveTo(bx - 7, by);
+                ctx.quadraticCurveTo(bx - 3, by - 5, bx, by);
+                ctx.quadraticCurveTo(bx + 3, by - 5, bx + 7, by);
+                ctx.stroke();
+            }
+
+            // Pirámides lejanas (parallax lento)
+            const p1 = pcam * 0.15;
+            for (let i = -1; i < 3; i++) {
+                const base = i * 850 - ((p1 % 850) + 850) % 850;
+                drawPyramidSilhouette(base + 180, 545, 280, 175);
+            }
+
+            // Bruma cálida del horizonte
+            const haze = ctx.createLinearGradient(0, 470, 0, 555);
+            haze.addColorStop(0, 'rgba(255, 231, 190, 0)');
+            haze.addColorStop(1, 'rgba(255, 231, 190, 0.75)');
+            ctx.fillStyle = haze;
+            ctx.fillRect(0, 470, 1000, 85);
+
+            // Dunas intermedias
+            const p2 = pcam * 0.4;
+            ctx.fillStyle = '#EBCB98';
+            ctx.beginPath();
+            ctx.moveTo(-5, 700);
+            for (let sx = -5; sx <= 1005; sx += 20) {
+                const wx = sx + p2;
+                ctx.lineTo(sx, 560 + Math.sin(wx * 0.004) * 26 + Math.sin(wx * 0.0013) * 16);
+            }
+            ctx.lineTo(1005, 700);
+            ctx.closePath();
+            ctx.fill();
+
+            // Palmeras
+            const p3 = pcam * 0.6;
+            for (let i = -1; i < 4; i++) {
+                const px = i * 640 - ((p3 % 640) + 640) % 640 + 110;
+                drawPalm(px, 632, 0.85 + (((i % 3) + 3) % 3) * 0.15);
+            }
+
+            // Duna cercana
+            ctx.fillStyle = '#E2BC85';
+            ctx.beginPath();
+            ctx.moveTo(-5, 700);
+            for (let sx = -5; sx <= 1005; sx += 20) {
+                const wx = sx + pcam * 0.75;
+                ctx.lineTo(sx, 622 + Math.sin(wx * 0.006 + 2) * 14);
+            }
+            ctx.lineTo(1005, 700);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        function drawPyramidSilhouette(x, baseY, w, h) {
+            // Cara iluminada
+            ctx.fillStyle = '#E9C795';
+            ctx.beginPath();
+            ctx.moveTo(x - w / 2, baseY);
+            ctx.lineTo(x, baseY - h);
+            ctx.lineTo(x + w * 0.12, baseY);
+            ctx.closePath();
+            ctx.fill();
+            // Cara en sombra
+            ctx.fillStyle = '#CFA872';
+            ctx.beginPath();
+            ctx.moveTo(x + w * 0.12, baseY);
+            ctx.lineTo(x, baseY - h);
+            ctx.lineTo(x + w / 2, baseY);
+            ctx.closePath();
+            ctx.fill();
+            // Pirámide pequeña acompañante
+            ctx.fillStyle = '#EDD2A3';
+            ctx.beginPath();
+            ctx.moveTo(x + w * 0.55, baseY);
+            ctx.lineTo(x + w * 0.75, baseY - h * 0.55);
+            ctx.lineTo(x + w * 0.95, baseY);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        function drawPalm(x, baseY, s) {
+            ctx.save();
+            ctx.translate(x, baseY);
+            ctx.scale(s, s);
+            // Tronco curvado
+            ctx.strokeStyle = '#8B6239';
+            ctx.lineWidth = 7;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.quadraticCurveTo(10, -45, 22, -78);
+            ctx.stroke();
+            // Hojas
+            ctx.strokeStyle = '#4E8C3A';
+            ctx.lineWidth = 5;
+            const tx = 22, ty = -78;
+            const angles = [-2.7, -2.1, -1.45, -0.7, 0, 0.6];
+            angles.forEach(a => {
+                ctx.beginPath();
+                ctx.moveTo(tx, ty);
+                ctx.quadraticCurveTo(tx + Math.cos(a) * 22, ty + Math.sin(a) * 22 - 14,
+                                     tx + Math.cos(a) * 44, ty + Math.sin(a) * 30 + 8);
+                ctx.stroke();
+            });
+            // Cocos
+            ctx.fillStyle = '#6B4A2B';
+            ctx.beginPath(); ctx.arc(tx - 4, ty + 4, 4, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.arc(tx + 4, ty + 5, 4, 0, Math.PI * 2); ctx.fill();
+            ctx.restore();
+        }
+
+        function drawDesertGround(pcam) {
+            const ground = ctx.createLinearGradient(0, 648, 0, 700);
+            ground.addColorStop(0, '#F2D6A4');
+            ground.addColorStop(1, '#D9B37E');
+            ctx.fillStyle = ground;
+            ctx.fillRect(0, 650, 1000, 50);
+            ctx.fillStyle = 'rgba(255, 248, 226, 0.7)';
+            ctx.fillRect(0, 650, 1000, 3);
+            // Piedras y matojos deterministas
+            for (let i = 0; i < 70; i++) {
+                const wx = (i * 137.7) % 4200;
+                const sx = wx - pcam;
+                if (sx < -20 || sx > 1020) continue;
+                const wy = 662 + ((i * 53) % 30);
+                if (i % 4 === 0) {
+                    ctx.strokeStyle = '#B99B60';
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.moveTo(sx, wy); ctx.lineTo(sx - 3, wy - 6);
+                    ctx.moveTo(sx, wy); ctx.lineTo(sx, wy - 7);
+                    ctx.moveTo(sx, wy); ctx.lineTo(sx + 3, wy - 6);
+                    ctx.stroke();
+                } else {
+                    ctx.fillStyle = i % 2 ? '#CBA97A' : '#BF9D6E';
+                    ctx.beginPath();
+                    ctx.ellipse(sx, wy, 3, 2, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
         }
 
         function initGame() {
@@ -987,27 +1576,36 @@
         }
 
         function drawGame() {
-            // Fondo
-            const gradient = ctx.createLinearGradient(0, 0, 0, 700);
-            gradient.addColorStop(0, '#87CEEB');
-            gradient.addColorStop(0.6, '#F4A460');
-            gradient.addColorStop(1, '#DEB887');
-            ctx.fillStyle = gradient;
-            ctx.fillRect(0, 0, 1000, 700);
+            // Fondo con parallax
+            drawDesertScene(cameraX);
+            drawDesertGround(cameraX);
 
-            // Suelo
-            ctx.fillStyle = '#EDC9AF';
-            ctx.fillRect(0 - cameraX, 650, 4000, 50);
-
-            // Plataformas
-            ctx.fillStyle = '#C9A876';
+            // Plataformas de arenisca
             const platforms = [
                 [300, 520], [600, 470], [900, 520], [1200, 440],
                 [1500, 520], [1800, 500], [2100, 520], [2400, 460],
                 [2700, 520], [3000, 480], [3300, 450]
             ];
             platforms.forEach(([x, y]) => {
-                ctx.fillRect(x - cameraX, y, 150, 20);
+                const sx = x - cameraX;
+                if (sx < -160 || sx > 1010) return;
+                ctx.fillStyle = '#C9A876';
+                ctx.fillRect(sx, y, 150, 20);
+                ctx.fillStyle = '#E3C494';
+                ctx.fillRect(sx, y, 150, 5);
+                ctx.fillStyle = '#A88354';
+                ctx.fillRect(sx, y + 16, 150, 4);
+                ctx.strokeStyle = 'rgba(120, 88, 50, 0.45)';
+                ctx.lineWidth = 1.5;
+                for (let bx = 30; bx < 150; bx += 30) {
+                    ctx.beginPath();
+                    ctx.moveTo(sx + bx, y + 4);
+                    ctx.lineTo(sx + bx, y + 16);
+                    ctx.stroke();
+                }
+                ctx.strokeStyle = '#8A6A42';
+                ctx.lineWidth = 1.5;
+                ctx.strokeRect(sx, y, 150, 20);
             });
 
             // Elementos del juego
@@ -1024,7 +1622,7 @@
             scorpions.forEach(s => {
                 if (s.active) {
                     const sx = s.x - cameraX;
-                    if (sx > -100 && sx < 1100) drawScorpion(sx, s.y);
+                    if (sx > -100 && sx < 1100) drawScorpion(sx, s.y, s.direction >= 0 ? 1 : -1);
                 }
             });
 
@@ -1046,46 +1644,40 @@
             drawText(`🏺 ${gameData.divisionsCorrect}/10`, 500, 35, 26, '#FFF', 'center');
             drawText(`Nivel ${gameData.currentLevel}`, 950, 35, 26, '#FFF', 'right');
 
-            // Controles táctiles
+            // Controles táctiles: solo en pantallas táctiles, discretos y en
+            // las esquinas para no tapar el escenario
             const buttons = [];
-            const controlY = 620;
-            const controlRadius = 45;
-
-            // Izquierda
-            ctx.fillStyle = touchLeft ? 'rgba(255, 200, 100, 0.9)' : 'rgba(139, 69, 19, 0.8)';
-            ctx.beginPath();
-            ctx.arc(100, controlY, controlRadius, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = '#FFD700';
-            ctx.lineWidth = 4;
-            ctx.stroke();
-            drawText('◀', 100, controlY, 36, '#FFF', 'center');
-
-            // Saltar
-            ctx.fillStyle = touchJump ? 'rgba(255, 220, 100, 0.9)' : 'rgba(212, 175, 55, 0.85)';
-            ctx.beginPath();
-            ctx.arc(220, controlY, controlRadius, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = '#FFF';
-            ctx.lineWidth = 4;
-            ctx.stroke();
-            drawText('▲', 220, controlY, 36, '#FFF', 'center');
-
-            // Derecha
-            ctx.fillStyle = touchRight ? 'rgba(255, 200, 100, 0.9)' : 'rgba(139, 69, 19, 0.8)';
-            ctx.beginPath();
-            ctx.arc(340, controlY, controlRadius, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = '#FFD700';
-            ctx.lineWidth = 4;
-            ctx.stroke();
-            drawText('▶', 340, controlY, 36, '#FFF', 'center');
-
-            controlZones.left = { cx: 100, cy: controlY, r: controlRadius + 15 };
-            controlZones.jump = { cx: 220, cy: controlY, r: controlRadius + 15 };
-            controlZones.right = { cx: 340, cy: controlY, r: controlRadius + 15 };
+            if (isTouchDevice) {
+                const controlY = 636;
+                const r = 42;
+                drawTouchBtn(72, controlY, r, '◀', touchLeft);
+                drawTouchBtn(190, controlY, r, '▶', touchRight);
+                drawTouchBtn(926, controlY, r, '▲', touchJump);
+                controlZones.left = { cx: 72, cy: controlY, r: r + 20 };
+                controlZones.right = { cx: 190, cy: controlY, r: r + 20 };
+                controlZones.jump = { cx: 926, cy: controlY, r: r + 20 };
+            } else {
+                controlZones.left = { cx: -9999, cy: -9999, r: 0 };
+                controlZones.right = { cx: -9999, cy: -9999, r: 0 };
+                controlZones.jump = { cx: -9999, cy: -9999, r: 0 };
+            }
 
             return buttons;
+        }
+
+        function drawTouchBtn(cx, cy, r, glyph, active) {
+            ctx.save();
+            ctx.globalAlpha = active ? 0.95 : 0.45;
+            ctx.fillStyle = active ? '#FFC94D' : '#8B5A2B';
+            ctx.beginPath();
+            ctx.arc(cx, cy, r, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+            ctx.globalAlpha = 1;
+            drawText(glyph, cx, cy + 1, 30, '#FFF', 'center');
+            ctx.restore();
         }
 
         function updateGame() {
@@ -1294,13 +1886,14 @@
 
         function drawShop() {
             const gradient = ctx.createLinearGradient(0, 0, 0, 700);
-            gradient.addColorStop(0, '#8B4513');
-            gradient.addColorStop(1, '#D2691E');
+            gradient.addColorStop(0, '#FBEED2');
+            gradient.addColorStop(0.6, '#F2D9A8');
+            gradient.addColorStop(1, '#E4C289');
             ctx.fillStyle = gradient;
             ctx.fillRect(0, 0, 1000, 700);
 
-            drawText('🏺 TIENDA', 500, 50, 40, '#FFD700', 'center', true);
-            drawText(`💰 ${gameData.coins}`, 500, 100, 28, '#FFD700', 'center');
+            drawText('🏺 TIENDA', 500, 50, 40, '#8B4513', 'center');
+            drawText(`💰 ${gameData.coins}`, 500, 100, 28, '#B8860B', 'center');
 
             const buttons = [];
 
@@ -1310,7 +1903,7 @@
                 const x = 80 + col * 230;
                 const y = 150 + row * 200;
 
-                drawRect(x, y, 200, 170, 'rgba(0,0,0,0.3)', '#FFD700', 15);
+                drawRect(x, y, 200, 170, 'rgba(255,255,255,0.65)', '#C9932B', 15);
 
                 // Explorador miniatura
                 ctx.save();
@@ -1318,18 +1911,11 @@
                 ctx.translate(mx, my);
                 ctx.scale(1.2, 1.2);
                 ctx.translate(-mx, -my);
-                switch(explorer.id) {
-                    case 'classic': drawClassicExplorer(mx, my); break;
-                    case 'indiana': drawIndianaExplorer(mx, my); break;
-                    case 'archaeologist': drawArchaeologistExplorer(mx, my); break;
-                    case 'adventurer': drawAdventurerExplorer(mx, my); break;
-                    case 'pharaoh': drawPharaohExplorer(mx, my); break;
-                    case 'cleopatra': drawCleopatraExplorer(mx, my); break;
-                    case 'anubis': drawAnubisExplorer(mx, my); break;
-                }
+                expWalk = 0;
+                drawExplorerType(mx, my, explorer.id);
                 ctx.restore();
 
-                drawText(explorer.name, x + 100, y + 120, 16, '#FFF', 'center');
+                drawText(explorer.name, x + 100, y + 120, 16, '#5D4037', 'center');
 
                 const owned = gameData.ownedExplorers.includes(explorer.id);
                 const equipped = gameData.currentExplorer === explorer.id;
@@ -1407,6 +1993,7 @@
             ctx.clearRect(0, 0, 1000, 700);
 
             if (gameData.scene === 'menu') {
+                gameTime++;
                 drawMenu();
             } else if (gameData.scene === 'game') {
                 if (!showingKeypad) updateGame();
