@@ -53,7 +53,7 @@
 
         // Renderizado nítido en pantallas de alta densidad
         function setupCanvasDPR() {
-            const dpr = Math.min(window.devicePixelRatio || 1, 2);
+            const dpr = Math.min(window.devicePixelRatio || 1, 1.5); // tope para pizarras 4K y PCs lentos
             canvas.width = LOGICAL_W * dpr;
             canvas.height = LOGICAL_H * dpr;
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -217,58 +217,43 @@
             }
         }
 
-        // MOUSE
-        canvas.addEventListener('mousedown', (e) => {
+        // POINTER EVENTS: dedo, ratón o lápiz (pizarras digitales) con un solo código
+        canvas.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            if (e.pointerType === 'touch') goFullscreen();
+            try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
             const coords = getCanvasCoords(e.clientX, e.clientY);
-            handleInteraction(coords.x, coords.y, 'mouse');
+            handleInteraction(coords.x, coords.y, e.pointerId);
         });
 
-        canvas.addEventListener('mouseup', () => {
-            delete activeTouches['mouse'];
+        canvas.addEventListener('pointermove', (e) => {
+            const t = activeTouches[e.pointerId];
+            if (!t || gameData.scene !== 'game' || showingKeypad) return;
+            const coords = getCanvasCoords(e.clientX, e.clientY);
+            t.x = coords.x;
+            t.y = coords.y;
+            checkControlZone(coords.x, coords.y, e.pointerId);
+        });
+
+        const endPointer = (e) => {
+            delete activeTouches[e.pointerId];
             updateTouchControls();
-        });
+        };
+        canvas.addEventListener('pointerup', endPointer);
+        canvas.addEventListener('pointercancel', endPointer);
+        canvas.addEventListener('lostpointercapture', endPointer);
+        canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-        canvas.addEventListener('mouseleave', () => {
-            delete activeTouches['mouse'];
+        // Si se pierde el foco con algo pulsado, soltar todo
+        const releaseAll = () => {
+            for (const k in keys) keys[k] = false;
+            for (const id in activeTouches) delete activeTouches[id];
             updateTouchControls();
-        });
-
-        // TOUCH
-        canvas.addEventListener('touchstart', (e) => {
-            e.preventDefault();
-            goFullscreen();
-            for (let touch of e.changedTouches) {
-                const coords = getCanvasCoords(touch.clientX, touch.clientY);
-                handleInteraction(coords.x, coords.y, touch.identifier);
-            }
-        });
-
-        canvas.addEventListener('touchmove', (e) => {
-            e.preventDefault();
-            for (let touch of e.changedTouches) {
-                const coords = getCanvasCoords(touch.clientX, touch.clientY);
-                if (activeTouches[touch.identifier] && gameData.scene === 'game' && !showingKeypad) {
-                    activeTouches[touch.identifier].x = coords.x;
-                    activeTouches[touch.identifier].y = coords.y;
-                    checkControlZone(coords.x, coords.y, touch.identifier);
-                }
-            }
-        });
-
-        canvas.addEventListener('touchend', (e) => {
-            e.preventDefault();
-            for (let touch of e.changedTouches) {
-                delete activeTouches[touch.identifier];
-            }
-            updateTouchControls();
-        });
-
-        canvas.addEventListener('touchcancel', (e) => {
-            e.preventDefault();
-            for (let touch of e.changedTouches) {
-                delete activeTouches[touch.identifier];
-            }
-            updateTouchControls();
+        };
+        window.addEventListener('blur', releaseAll);
+        document.addEventListener('visibilitychange', () => {
+            releaseAll();
+            if (typeof resetLoopClock === 'function') resetLoopClock();
         });
 
         function handleInteraction(x, y, touchId) {
@@ -1989,14 +1974,29 @@
         }
 
         // ============ GAME LOOP ============
-        function gameLoop() {
+        // Lógica a 60 pasos/s fijos aunque el equipo pinte menos fotogramas
+        // (pizarras digitales y PCs lentos): el personaje va igual de rápido en todos.
+        const STEP = 1000 / 60;
+        let lastT = performance.now(), acc = 0;
+        function resetLoopClock() { lastT = performance.now(); acc = 0; }
+
+        function gameLoop(now) {
+            if (now === undefined) now = performance.now();
+            acc += Math.min(now - lastT, 250);
+            lastT = now;
+            let steps = 0;
+            while (acc >= STEP && steps < 6) {
+                acc -= STEP; steps++;
+                if (gameData.scene === 'menu') gameTime++;
+                else if (gameData.scene === 'game' && !showingKeypad) updateGame();
+            }
+            if (steps >= 6) acc = 0;
+
             ctx.clearRect(0, 0, 1000, 700);
 
             if (gameData.scene === 'menu') {
-                gameTime++;
                 drawMenu();
             } else if (gameData.scene === 'game') {
-                if (!showingKeypad) updateGame();
                 drawGame();
                 if (showingKeypad) drawKeypad();
             } else if (gameData.scene === 'victory') {

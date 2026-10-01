@@ -1,49 +1,37 @@
-const CACHE_NAME = 'division-quest-v3';
+const CACHE_NAME = 'division-quest-v4';
 const urlsToCache = [
   './',
   './index.html',
   './manifest_division.json'
 ];
 
-// Instalación del Service Worker
 self.addEventListener('install', event => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then(cache => {
-        console.log('Cache abierto - División Quest');
-        return cache.addAll(urlsToCache);
-      })
-  );
+  event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(urlsToCache)));
   self.skipWaiting();
 });
 
-// Activación del Service Worker
 self.addEventListener('activate', event => {
   event.waitUntil(
-    caches.keys().then(cacheNames => {
-      return Promise.all(
-        cacheNames.map(cacheName => {
-          if (cacheName !== CACHE_NAME) {
-            console.log('Eliminando cache antigua:', cacheName);
-            return caches.delete(cacheName);
-          }
-        })
-      );
-    })
+    caches.keys().then(names => Promise.all(
+      names.filter(n => n !== CACHE_NAME).map(n => caches.delete(n))
+    ))
   );
   self.clients.claim();
 });
 
-// Intercepción de peticiones
+// Red primero: siempre se carga la última versión publicada;
+// la caché solo se usa si no hay conexión.
 self.addEventListener('fetch', event => {
+  if (event.request.method !== 'GET') return;
   event.respondWith(
-    caches.match(event.request)
+    fetch(event.request)
       .then(response => {
-        if (response) {
-          return response;
+        if (response && response.ok && new URL(event.request.url).origin === self.location.origin) {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy));
         }
-        return fetch(event.request);
-      }
-    )
+        return response;
+      })
+      .catch(() => caches.match(event.request))
   );
 });
